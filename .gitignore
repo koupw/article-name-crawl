@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# 配置文件（包含 API Key）
+research_interests.yaml
+
+# 输出文件
+papers/
+output/
+*.md
+!README.md
+!USAGE.md
+
+# 历史记录
+crawled_papers.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
+*.bak
+*.cache
+
+# Claude Code
+.claude/
