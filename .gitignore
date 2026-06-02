@@ -48,5 +48,8 @@ Desktop.ini
 *.bak
 *.cache
 
+# Obsidian
+.obsidian/
+
 # Claude Code
 .claude/
