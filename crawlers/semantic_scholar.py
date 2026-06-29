@@ -112,6 +112,54 @@ class SemanticScholarCrawler(BaseCrawler):
             self.logger.warning(f"解析论文失败: {e}")
             return None
 
+    def _search_batch(
+        self,
+        query: str,
+        keywords: list[str],
+        domain: str,
+        limit: int,
+        seen_dois: set[str],
+    ) -> list[Paper]:
+        """单批关键词搜索
+
+        Args:
+            query: 搜索查询
+            keywords: 本批关键词
+            domain: 研究领域
+            limit: 本批最大结果数
+            seen_dois: 已见 DOI 集合（跨批去重）
+
+        Returns:
+            论文列表
+        """
+        try:
+            results = self.sch.search_paper(
+                query=query,
+                limit=limit,
+                fields=self.FIELDS,
+            )
+        except ObjectNotFoundException:
+            return []
+        except Exception as e:
+            self.logger.error("Semantic Scholar 查询 '%s' 失败: %s", query[:40], e)
+            return []
+
+        papers = []
+        for result in results.items:
+            paper = self._parse_paper(result, keywords, domain)
+            if not paper:
+                continue
+
+            # 跨轮去重
+            if paper.doi:
+                if paper.doi in seen_dois:
+                    continue
+                seen_dois.add(paper.doi)
+
+            papers.append(paper)
+
+        return papers
+
     def search(
         self,
         keywords: list[str],
@@ -119,10 +167,10 @@ class SemanticScholarCrawler(BaseCrawler):
         max_results: int = 50,
         domain: str = "",
     ) -> Generator[Paper, None, None]:
-        """搜索 Semantic Scholar 论文
+        """搜索 Semantic Scholar 论文（多轮关键词搜索）
 
         Args:
-            keywords: 关键词列表（Semantic Scholar 不支持分类过滤）
+            keywords: 关键词列表
             categories: 分类列表（未使用）
             max_results: 最大结果数
             domain: 研究领域名称
@@ -130,29 +178,42 @@ class SemanticScholarCrawler(BaseCrawler):
         Yields:
             Paper 对象
         """
-        # 组合关键词查询（限制数量避免查询过长）
-        query = " ".join(keywords[:5])
-        self.logger.info(f"Semantic Scholar 查询: {query}")
+        # 将关键词分批
+        batch_size = 6
+        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
+        per_batch = max(max_results // len(batches), 8)
 
-        try:
-            results = self.sch.search_paper(
-                query=query,
-                limit=max_results,
-                fields=self.FIELDS,
+        self.logger.info(
+            "Semantic Scholar 多轮搜索: %d 批, 每批最多 %d 篇",
+            len(batches), per_batch,
+        )
+
+        seen_dois: set[str] = set()
+        total = 0
+
+        for batch_idx, batch in enumerate(batches):
+            if total >= max_results:
+                break
+
+            query = " ".join(batch)
+            remaining = max_results - total
+            batch_limit = min(per_batch, remaining)
+
+            self.logger.debug(
+                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
             )
-        except ObjectNotFoundException:
-            self.logger.warning("Semantic Scholar 查询无结果")
-            return
-        except Exception as e:
-            self.logger.error(f"Semantic Scholar 查询失败: {e}")
-            return
 
-        count = 0
-        for result in results.items:
-            paper = self._parse_paper(result, keywords, domain)
-            if paper:
-                count += 1
-                self.logger.debug(f"[{count}] {paper.title}")
+            papers = self._search_batch(
+                query=query,
+                keywords=batch,
+                domain=domain,
+                limit=batch_limit,
+                seen_dois=seen_dois,
+            )
+
+            for paper in papers:
+                total += 1
+                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
                 yield paper
 
-        self.logger.info(f"Semantic Scholar 共返回 {count} 篇论文")
+        self.logger.info("Semantic Scholar 共返回 %d 篇论文（%d 批搜索）", total, len(batches))

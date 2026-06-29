@@ -33,25 +33,152 @@ class IEEEXploreCrawler(BaseCrawler):
     def get_name(self) -> str:
         return "ieee_xplore"
 
-    def _build_query(self, keywords: list[str]) -> str:
-        """构建 IEEE Xplore 搜索查询
+    def _build_batch_query(self, batch: list[str]) -> str:
+        """构建一批关键词的查询字符串
 
         Args:
-            keywords: 关键词列表
+            batch: 一批关键词
 
         Returns:
-            查询字符串
+            OR 连接的查询字符串
         """
-        # IEEE Xplore 使用 AND/OR 语法
-        # 限制关键词数量避免查询过长
         query_parts = []
-        for kw in keywords[:5]:
+        for kw in batch:
             if " " in kw:
                 query_parts.append(f'"{kw}"')
             else:
                 query_parts.append(kw)
-
         return " OR ".join(query_parts)
+
+    def _search_single(
+        self,
+        query: str,
+        keywords: list[str],
+        domain: str,
+        max_results: int,
+        seen_dois: set[str],
+    ) -> list[Paper]:
+        """单批关键词搜索
+
+        Args:
+            query: 查询字符串
+            keywords: 本批关键词列表
+            domain: 研究领域
+            max_results: 本批最大结果数
+            seen_dois: 已见 DOI 集合
+
+        Returns:
+            论文列表
+        """
+        start_record = 1
+        count = 0
+        papers = []
+
+        while count < max_results:
+            params = {
+                "querytext": query,
+                "apikey": self.api_key,
+                "max_records": min(200, max_results - count),
+                "start_record": start_record,
+            }
+
+            try:
+                response = self.session.get(
+                    self.BASE_URL,
+                    params=params,
+                    timeout=30,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                self.logger.error("IEEE Xplore 查询 '%s' 失败: %s", query[:40], e)
+                break
+
+            articles = data.get("articles", [])
+            if not articles:
+                break
+
+            for article in articles:
+                if count >= max_results:
+                    break
+                paper = self._parse_article(article, keywords, domain)
+                if not paper:
+                    continue
+
+                if paper.doi:
+                    if paper.doi in seen_dois:
+                        continue
+                    seen_dois.add(paper.doi)
+
+                count += 1
+                papers.append(paper)
+
+            total_records = data.get("total_records", 0)
+            if start_record + len(articles) >= total_records:
+                break
+
+            start_record += len(articles)
+            time.sleep(1)
+
+        return papers
+
+    def search(
+        self,
+        keywords: list[str],
+        categories: list[str],
+        max_results: int = 50,
+        domain: str = "",
+    ) -> Generator[Paper, None, None]:
+        """搜索 IEEE Xplore 论文（多轮关键词搜索）
+
+        Args:
+            keywords: 关键词列表
+            categories: 分类列表（未使用）
+            max_results: 最大结果数
+            domain: 研究领域名称
+
+        Yields:
+            Paper 对象
+        """
+        # 将关键词分批
+        batch_size = 6
+        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
+        per_batch = max(max_results // len(batches), 8)
+
+        self.logger.info(
+            "IEEE Xplore 多轮搜索: %d 批, 每批最多 %d 篇",
+            len(batches), per_batch,
+        )
+
+        seen_dois: set[str] = set()
+        total = 0
+
+        for batch_idx, batch in enumerate(batches):
+            if total >= max_results:
+                break
+
+            query = self._build_batch_query(batch)
+            remaining = max_results - total
+            batch_limit = min(per_batch, remaining)
+
+            self.logger.debug(
+                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
+            )
+
+            papers = self._search_single(
+                query=query,
+                keywords=batch,
+                domain=domain,
+                max_results=batch_limit,
+                seen_dois=seen_dois,
+            )
+
+            for paper in papers:
+                total += 1
+                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
+                yield paper
+
+        self.logger.info("IEEE Xplore 共返回 %d 篇论文（%d 批搜索）", total, len(batches))
 
     def _parse_article(self, article: dict, keywords: list[str], domain: str) -> Optional[Paper]:
         """解析 IEEE Xplore 文章为 Paper 对象
@@ -133,71 +260,3 @@ class IEEEXploreCrawler(BaseCrawler):
         except Exception as e:
             self.logger.warning(f"解析论文失败: {e}")
             return None
-
-    def search(
-        self,
-        keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 IEEE Xplore 论文
-
-        Args:
-            keywords: 关键词列表
-            categories: 分类列表（未使用，IEEE 使用 content_type 过滤）
-            max_results: 最大结果数
-            domain: 研究领域名称
-
-        Yields:
-            Paper 对象
-        """
-        query = self._build_query(keywords)
-        self.logger.info(f"IEEE Xplore 查询: {query}")
-
-        start_record = 1
-        count = 0
-
-        while count < max_results:
-            params = {
-                "querytext": query,
-                "apikey": self.api_key,
-                "max_records": min(200, max_results - count),
-                "start_record": start_record,
-            }
-
-            try:
-                response = self.session.get(
-                    self.BASE_URL,
-                    params=params,
-                    timeout=30,
-                )
-                response.raise_for_status()
-                data = response.json()
-            except requests.exceptions.RequestException as e:
-                self.logger.error(f"IEEE Xplore 请求失败: {e}")
-                break
-
-            articles = data.get("articles", [])
-            if not articles:
-                break
-
-            for article in articles:
-                paper = self._parse_article(article, keywords, domain)
-                if paper:
-                    count += 1
-                    self.logger.debug(f"[{count}] {paper.title}")
-                    yield paper
-
-                    if count >= max_results:
-                        break
-
-            # 检查是否还有更多结果
-            total_results = data.get("total_records", 0)
-            if start_record + len(articles) >= total_results:
-                break
-
-            start_record += len(articles)
-            time.sleep(1)  # 延迟 1 秒
-
-        self.logger.info(f"IEEE Xplore 共返回 {count} 篇论文")

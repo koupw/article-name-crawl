@@ -9,7 +9,18 @@ cd E:/WorkSpace/ClaudeWork/article-name-crawl
 # 激活虚拟环境
 .venv\Scripts\activate
 
-# 查看帮助
+# 首次使用：生成默认配置文件
+python main.py --init
+
+# 编辑 research_interests.yaml，输入你的研究领域和关键词
+
+# 快速预览（不写入文件）
+python main.py --dry-run
+
+# 正式爬取
+python main.py
+
+# 查看完整帮助
 python main.py --help
 ```
 
@@ -24,7 +35,18 @@ python main.py --sources openalex --max-results 50
 
 # 只用 arXiv
 python main.py --sources arxiv --max-results 30
+
+# 指定研究领域（默认自动处理所有领域）
+python main.py --domain "FMCW Laser Ranging"
+
+# 处理所有领域（按 priority 排序）
+python main.py
+
+# 处理多个指定领域
+python main.py --domain "FMCW Laser Ranging,Lidar"
 ```
+
+> **提示**：数据源之间**并发爬取**，多个数据源不额外增加等待时间，总耗时 ≈ 最慢的数据源。
 
 ## 质量筛选
 
@@ -93,14 +115,84 @@ python main.py --sources arxiv,openalex --max-results 50 --output ./papers
 python main.py --sources openalex --min-citations 10 --year-from 2023
 ```
 
+## 保证每次爬取有新文章
+
+由于默认开启跨次去重，多次爬取相同关键词可能没有新文章。以下是解决方案：
+
+### 方案 1：调整关键词（最有效）
+
+编辑 `research_interests.yaml`，添加更宽泛的关键词：
+
+```yaml
+keywords:
+  # 现有关键词
+  - frequency modulated continuous wave
+  - FMCW
+  # 添加更宽泛的关键词
+  - laser ranging
+  - distance measurement
+  - interferometry
+  - optical measurement
+  - lidar
+  - time of flight
+```
+
+### 方案 2：增加数据源
+
+```bash
+# 使用所有数据源
+python main.py --sources arxiv,semantic_scholar,openalex,ieee_xplore --max-results 50
+```
+
+### 方案 3：调整时间范围
+
+```yaml
+# research_interests.yaml
+filters:
+  year_from: 2024  # 只爬取 2024 年以后的论文
+```
+
+或命令行：
+
+```bash
+python main.py --sources arxiv,openalex --year-from 2024
+```
+
+### 方案 4：增加最大结果数
+
+```bash
+python main.py --sources arxiv,openalex --max-results 100
+```
+
+### 方案 5：定期更新关键词
+
+根据研究进展，在 `research_interests.yaml` 中添加新出现的技术术语：
+
+```yaml
+keywords:
+  # 添加新术语
+  - synthetic aperture lidar
+  - coherent detection
+  - frequency comb ranging
+```
+
+### 推荐配置
+
+```bash
+# 每周运行一次，使用宽泛关键词，只爬取最近论文
+python main.py --sources arxiv,openalex,semantic_scholar --max-results 100 --year-from 2024
+```
+
 ## 输出文件位置
 
 默认输出到配置文件中的 `vault_path/papers_dir`：
 
 ```
-E:/WorkSpace/ClaudeWork/fmcw-article/20_Research/Papers/
-├── FMCW_Laser_Ranging_20260602_195551.md    # 论文列表
-└── crawled_papers.json                      # 历史记录
+E:/WorkSpace/ClaudeWork/article-name-crawl/Papers/
+├── _index.md                          # 📚 索引（汇总所有列表文件）
+├── FMCW_Laser_Ranging_20260629.md     # 论文列表（每次爬取生成一个文件）
+├── FMCW_Laser_Ranging_20260604.md     # 历史爬取记录
+└── crawled_papers.json                # 历史记录（跨次去重 + 翻译缓存）
 ```
 
 ## 标题翻译
@@ -115,6 +207,19 @@ python main.py --sources openalex --max-results 20 --no-translate
 
 翻译使用 Google Translate，无需 API Key。
 
+**性能优化**：
+- **并发翻译**：默认 5 线程同时翻译，30 篇论文约 5 秒完成
+- **翻译持久化**：翻译结果自动缓存到 `crawled_papers.json`，下次运行相同论文不再请求翻译
+
+## 配置初始化
+
+```bash
+# 生成带注释的默认配置文件
+python main.py --init
+```
+
+生成 `research_interests.yaml`，包含示例领域、API 配置项、筛选条件的完整中文注释。如果文件已存在则跳过，不会覆盖。
+
 ## 常用命令速查
 
 | 需求 | 命令 |
@@ -123,6 +228,8 @@ python main.py --sources openalex --max-results 20 --no-translate
 | 高质量论文 | `python main.py --sources openalex --min-citations 10` |
 | 最新论文 | `python main.py --sources arxiv,openalex --year-from 2024` |
 | 完整爬取 | `python main.py --sources arxiv,openalex --max-results 100` |
+| 多领域爬取 | `python main.py --domain all` |
+| 生成默认配置 | `python main.py --init` |
 | 清除重爬 | `python main.py --clear-history` |
 | 不翻译 | `python main.py --sources openalex --no-translate` |
 
@@ -202,6 +309,48 @@ python main.py --sources openalex --no-translate
 
 翻译质量取决于 Google Translate。对于专业术语可能不完全准确，建议参考原文。
 
+### Q: 翻译会重复请求 Google API 吗？
+
+不会。翻译结果会自动缓存到 `crawled_papers.json`，下次运行相同论文直接从缓存恢复，不发起翻译请求。
+
+### Q: 如何配置多个研究领域？
+
+在 `research_interests.yaml` 的 `research_domains` 下并列添加：
+
+```yaml
+research_domains:
+  FMCW Laser Ranging:
+    keywords: [...]
+    arxiv_categories: [...]
+    priority: 5
+
+  Lidar:
+    keywords:
+      - lidar
+      - time-of-flight
+      - 3D imaging
+    arxiv_categories:
+      - physics.optics
+    priority: 3
+```
+
+运行 `python main.py` 自动按 priority 从高到低处理所有领域。
+
+### Q: 如何对新用户快速上手？
+
+```bash
+# 1. 生成默认配置
+python main.py --init
+
+# 2. 编辑 research_interests.yaml，填入你的研究关键词
+
+# 3. 快速预览
+python main.py --dry-run
+
+# 4. 正式爬取
+python main.py
+```
+
 ## 输出格式
 
 爬取结果为 Markdown 文件，包含：
@@ -229,12 +378,42 @@ sources:
 ```
 article-name-crawl/
 ├── research_interests.yaml    # 配置文件
+├── OPTIMIZATION.md            # 优化方案文档
 ├── README.md                  # 项目说明
 ├── USAGE.md                   # 使用指南（本文件）
-├── main.py                    # 主程序
+├── requirements.txt           # Python 依赖
+├── main.py                    # CLI 入口
 ├── config/                    # 配置模块
+│   ├── __init__.py
+│   └── loader.py              # 配置加载 + 验证
 ├── crawlers/                  # 爬虫模块
-├── models/                    # 数据模型
-├── storage/                   # 存储模块
-└── utils/                     # 工具模块
+│   ├── __init__.py
+│   ├── base.py                # 爬虫基类（含重试机制）
+│   ├── arxiv_crawler.py       # arXiv 爬虫
+│   ├── semantic_scholar.py    # Semantic Scholar 爬虫（多轮搜索）
+│   ├── google_scholar.py      # Google Scholar 爬虫
+│   ├── openalex_crawler.py    # OpenAlex 爬虫（多轮搜索）
+│   └── ieee_xplore_crawler.py # IEEE Xplore 爬虫（多轮搜索）
+├── models/
+│   ├── __init__.py
+│   └── paper.py               # 论文数据模型
+├── storage/
+│   ├── __init__.py
+│   └── markdown_writer.py     # Markdown 输出 + 索引生成
+├── tests/                     # 单元测试（69 个测试用例）
+│   ├── conftest.py            # 测试夹具与工厂函数
+│   ├── test_config.py         # 配置验证测试
+│   ├── test_dedup.py          # 去重逻辑测试
+│   ├── test_filter.py         # 质量筛选测试
+│   ├── test_history.py        # 历史记录测试
+│   └── test_paper_model.py    # 数据模型测试
+└── utils/
+    ├── __init__.py
+    ├── dedup.py               # 去重逻辑
+    ├── filter.py              # 质量筛选
+    ├── history.py             # 历史记录管理（跨次去重 + 翻译缓存）
+    ├── logger.py              # 日志配置
+    ├── paper_translator.py    # 并发翻译
+    ├── retry.py               # 统一重试机制（指数退避）
+    └── translator.py          # 翻译引擎（Google Translate）
 ```

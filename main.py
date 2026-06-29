@@ -4,11 +4,13 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from config.loader import load_config, get_domain
+from config.loader import load_config, validate_config, get_domains, init_config
 from models.paper import Paper
 from crawlers.arxiv_crawler import ArxivCrawler
 from crawlers.semantic_scholar import SemanticScholarCrawler
@@ -17,10 +19,10 @@ from crawlers.openalex_crawler import OpenAlexCrawler
 from crawlers.ieee_xplore_crawler import IEEEXploreCrawler
 from utils.dedup import deduplicate
 from utils.filter import filter_papers
-from utils.history import deduplicate_with_history, save_history, clear_history
+from utils.history import deduplicate_with_history, save_history, clear_history, update_history_translations
 from utils.paper_translator import translate_paper_titles
 from utils.logger import setup_logger
-from storage.markdown_writer import write_markdown
+from storage.markdown_writer import write_markdown, write_index
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -86,6 +88,11 @@ def parse_args() -> argparse.Namespace:
         "--clear-history",
         action="store_true",
         help="清除历史记录",
+    )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="生成默认配置文件 research_interests.yaml",
     )
     parser.add_argument(
         "--min-citations",
@@ -156,6 +163,24 @@ def get_crawlers(
     return crawlers
 
 
+def _crawl_single(
+    crawler,
+    keywords: list[str],
+    categories: list[str],
+    max_results: int,
+    domain: str,
+) -> list[Paper]:
+    """单个爬虫的爬取任务（在线程池中执行）"""
+    return list(
+        crawler.search(
+            keywords=keywords,
+            categories=categories,
+            max_results=max_results,
+            domain=domain,
+        )
+    )
+
+
 def crawl_papers(
     crawlers: list,
     keywords: list[str],
@@ -163,7 +188,10 @@ def crawl_papers(
     domain: str,
     max_results: int,
 ) -> list[Paper]:
-    """爬取论文
+    """并发爬取论文
+
+    使用 ThreadPoolExecutor 并发爬取所有数据源。
+    单个爬虫失败不影响其他数据源。
 
     Args:
         crawlers: 爬虫列表
@@ -177,26 +205,133 @@ def crawl_papers(
     """
     all_papers = []
 
-    for crawler in crawlers:
-        source_name = crawler.get_name()
-        console.print(f"\n[bold blue]正在爬取 {source_name}...[/bold blue]")
+    with ThreadPoolExecutor(max_workers=len(crawlers)) as executor:
+        future_map = {
+            executor.submit(
+                _crawl_single,
+                c,
+                keywords,
+                categories,
+                max_results,
+                domain,
+            ): c
+            for c in crawlers
+        }
 
-        try:
-            papers = list(
-                crawler.search(
-                    keywords=keywords,
-                    categories=categories,
-                    max_results=max_results,
-                    domain=domain,
-                )
-            )
-            all_papers.extend(papers)
-            console.print(f"[green]  {source_name}: 获取 {len(papers)} 篇论文[/green]")
-        except Exception as e:
-            logger.error(f"{source_name} 爬取失败: {e}")
-            console.print(f"[red]  {source_name}: 爬取失败 - {e}[/red]")
+        for future in as_completed(future_map):
+            crawler = future_map[future]
+            source_name = crawler.get_name()
+            try:
+                papers = future.result()
+                all_papers.extend(papers)
+                console.print(f"[green]  {source_name}: 获取 {len(papers)} 篇论文[/green]")
+            except Exception as e:
+                logger.error("%s 爬取失败: %s", source_name, e)
+                console.print(f"[red]  {source_name}: 爬取失败 - {e}[/red]")
 
     return all_papers
+
+
+def process_domain(
+    domain_config,
+    config,
+    args,
+    crawlers: list,
+    output_path: Path,
+) -> Optional[Path]:
+    """处理单个研究领域的完整流水线
+
+    爬取 → 去重 → 筛选 → 跨次去重 → 翻译 → 写入
+
+    Args:
+        domain_config: 研究领域配置
+        config: 应用配置
+        args: 命令行参数
+        crawlers: 爬虫实例列表（已在外部创建）
+        output_path: 输出目录
+
+    Returns:
+        输出文件路径，无新论文时返回 None
+    """
+    console.print(f"\n[bold cyan]处理领域: {domain_config.name}[/bold cyan]")
+    console.print(f"关键词数量: {len(domain_config.keywords)}")
+    console.print(f"arXiv 分类: {', '.join(domain_config.arxiv_categories)}")
+
+    # 爬取论文
+    with console.status("[bold green]正在爬取论文..."):
+        all_papers = crawl_papers(
+            crawlers=crawlers,
+            keywords=domain_config.keywords,
+            categories=domain_config.arxiv_categories,
+            domain=domain_config.name,
+            max_results=args.max_results,
+        )
+    console.print(f"[bold]共爬取 {len(all_papers)} 篇论文[/bold]")
+
+    if not all_papers:
+        console.print("[yellow]未爬取到任何论文，跳过后续处理[/yellow]")
+        return None
+
+    # 单次运行内去重
+    console.print("[bold]正在去重...[/bold]")
+    unique_papers = deduplicate(all_papers)
+    console.print(f"[bold]单次去重后: {len(unique_papers)} 篇论文[/bold]")
+
+    # 质量筛选
+    console.print("[bold]正在质量筛选...[/bold]")
+    unique_papers = filter_papers(unique_papers, config.filters)
+    console.print(f"[bold]筛选后: {len(unique_papers)} 篇论文[/bold]")
+
+    if not unique_papers:
+        console.print("[yellow]筛选后无可用论文[/yellow]")
+        return None
+
+    if args.dry_run:
+        console.print("\n[yellow]干跑模式，不写入文件[/yellow]")
+        for i, paper in enumerate(unique_papers[:10], 1):
+            console.print(f"  {i}. {paper.title}")
+        if len(unique_papers) > 10:
+            console.print(f"  ... 还有 {len(unique_papers) - 10} 篇")
+        return None
+
+    # 跨次去重（在翻译之前，避免翻译已爬取的论文）
+    history = {}  # 确保 history 变量存在
+    if not args.no_history:
+        console.print("[bold]正在跨次去重...[/bold]")
+        unique_papers, history = deduplicate_with_history(unique_papers, output_path)
+        console.print(f"[bold]跨次去重后: {len(unique_papers)} 篇新论文[/bold]")
+        if not unique_papers:
+            console.print("[yellow]所有论文已在历史记录中，无需写入[/yellow]")
+            return None
+
+    # 翻译论文标题
+    if not args.no_translate and unique_papers:
+        console.print("[bold]正在翻译论文标题...[/bold]")
+        unique_papers = translate_paper_titles(unique_papers)
+        console.print("[bold]翻译完成[/bold]")
+        if not args.no_history:
+            update_history_translations(history, unique_papers)
+
+    # 写入文件
+    console.print("[bold]正在写入文件...[/bold]")
+    try:
+        file_path = write_markdown(
+            papers=unique_papers,
+            output_path=output_path,
+            domain=domain_config.name,
+            language=config.language,
+        )
+        console.print(f"[bold green]完成！文件已保存到: {file_path}[/bold green]")
+
+        if not args.no_history:
+            save_history(output_path, history)
+            console.print(f"[dim]历史记录已更新: {len(history)} 篇论文[/dim]")
+
+        return file_path
+    except Exception as e:
+        logger.error("写入文件失败: %s", e)
+        console.print(f"[red]写入文件失败: {e}[/red]")
+        return None
 
 
 def main():
@@ -205,6 +340,11 @@ def main():
 
     # 配置日志
     setup_logger(verbose=args.verbose)
+
+    # 初始化配置（不执行爬取）
+    if args.init:
+        init_config(args.config)
+        return
 
     # 加载配置
     try:
@@ -216,16 +356,20 @@ def main():
         console.print(f"[red]配置错误: {e}[/red]")
         sys.exit(1)
 
-    # 获取研究领域
+    # 验证配置
+    config_warnings = validate_config(config)
+    for warning in config_warnings:
+        console.print(f"[yellow]配置警告: {warning}[/yellow]")
+
+    # 获取研究领域列表
     try:
-        domain_config = get_domain(config, args.domain)
+        domains = get_domains(config, args.domain)
     except ValueError as e:
         console.print(f"[red]错误: {e}[/red]")
         sys.exit(1)
 
-    console.print(f"[bold]研究领域: {domain_config.name}[/bold]")
-    console.print(f"关键词数量: {len(domain_config.keywords)}")
-    console.print(f"arXiv 分类: {', '.join(domain_config.arxiv_categories)}")
+    console.print(f"[bold]共 {len(domains)} 个研究领域: "
+                  f"{', '.join(d.name for d in domains)}[/bold]")
 
     # 输出目录（需要提前确定，因为清除历史记录需要）
     if args.output:
@@ -259,75 +403,33 @@ def main():
     console.print(f"数据源: {', '.join(sources)}")
     console.print(f"最大结果数: {args.max_results} / 数据源")
 
-    # 初始化爬虫
-    crawlers = get_crawlers(
-        sources=sources,
-        config=config,
-    )
+    # 初始化爬虫（在所有领域间共享）
+    crawlers = get_crawlers(sources=sources, config=config)
 
-    # 爬取论文
-    with console.status("[bold green]正在爬取论文..."):
-        all_papers = crawl_papers(
+    # 处理每个领域
+    processed = 0
+    for domain_config in domains:
+        result = process_domain(
+            domain_config=domain_config,
+            config=config,
+            args=args,
             crawlers=crawlers,
-            keywords=domain_config.keywords,
-            categories=domain_config.arxiv_categories,
-            domain=domain_config.name,
-            max_results=args.max_results,
-        )
-
-    console.print(f"\n[bold]共爬取 {len(all_papers)} 篇论文[/bold]")
-
-    # 单次运行内去重
-    console.print("[bold]正在去重...[/bold]")
-    unique_papers = deduplicate(all_papers)
-    console.print(f"[bold]单次去重后: {len(unique_papers)} 篇论文[/bold]")
-
-    # 质量筛选
-    if config.filters.min_citations > 0 or config.filters.year_from or config.filters.year_to or config.filters.require_doi or config.filters.open_access_only:
-        console.print("[bold]正在质量筛选...[/bold]")
-        unique_papers = filter_papers(unique_papers, config.filters)
-        console.print(f"[bold]筛选后: {len(unique_papers)} 篇论文[/bold]")
-
-    if args.dry_run:
-        console.print("\n[yellow]干跑模式，不写入文件[/yellow]")
-        # 打印前 10 篇
-        for i, paper in enumerate(unique_papers[:10], 1):
-            console.print(f"  {i}. {paper.title}")
-        if len(unique_papers) > 10:
-            console.print(f"  ... 还有 {len(unique_papers) - 10} 篇")
-        return
-
-    # 翻译论文标题
-    if not args.no_translate and unique_papers:
-        console.print("[bold]正在翻译论文标题...[/bold]")
-        unique_papers = translate_paper_titles(unique_papers)
-        console.print("[bold]翻译完成[/bold]")
-
-    # 跨次去重
-    if not args.no_history:
-        console.print("[bold]正在跨次去重...[/bold]")
-        unique_papers, history = deduplicate_with_history(unique_papers, output_path)
-        console.print(f"[bold]跨次去重后: {len(unique_papers)} 篇新论文[/bold]")
-
-    # 写入文件
-    console.print(f"\n[bold]正在写入文件...[/bold]")
-    try:
-        file_path = write_markdown(
-            papers=unique_papers,
             output_path=output_path,
-            domain=domain_config.name,
-            language=config.language,
         )
-        console.print(f"[bold green]完成！文件已保存到: {file_path}[/bold green]")
+        if result:
+            processed += 1
 
-        # 保存历史记录
-        if not args.no_history:
-            save_history(output_path, history)
-            console.print(f"[dim]历史记录已更新: {len(history)} 篇论文[/dim]")
-    except Exception as e:
-        logger.error(f"写入文件失败: {e}")
-        console.print(f"[red]写入文件失败: {e}[/red]")
-        sys.exit(1)
+    # 总结
+    if len(domains) > 1:
+        console.print(f"\n[bold green]全部完成！{processed}/{len(domains)} 个领域已处理[/bold green]")
+    elif processed == 0:
+        console.print("[yellow]未生成任何文件[/yellow]")
+
+    # 更新索引文件（如果有输出）
+    if not args.dry_run and processed > 0:
+        index_path = write_index(output_path)
+        if index_path:
+            console.print(f"[dim]索引文件: {index_path}[/dim]")
 
 
 if __name__ == "__main__":

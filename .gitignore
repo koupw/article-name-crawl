@@ -48,8 +48,14 @@ Desktop.ini
 *.bak
 *.cache
 
+# pytest 缓存
+.pytest_cache/
+
 # Obsidian
 .obsidian/
 
 # Claude Code
 .claude/
+
+# 确保优化方案文档被跟踪
+!OPTIMIZATION.md

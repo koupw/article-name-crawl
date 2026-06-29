@@ -33,21 +33,6 @@ class OpenAlexCrawler(BaseCrawler):
     def get_name(self) -> str:
         return "openalex"
 
-    def _build_filter(
-        self,
-        keywords: list[str],
-    ) -> str:
-        """构建 OpenAlex 过滤器
-
-        Args:
-            keywords: 关键词列表
-
-        Returns:
-            过滤器字符串
-        """
-        # OpenAlex 使用 search 参数进行全文搜索，不需要额外过滤器
-        return ""
-
     def _parse_work(self, work: dict, keywords: list[str], domain: str) -> Optional[Paper]:
         """解析 OpenAlex work 为 Paper 对象
 
@@ -145,34 +130,30 @@ class OpenAlexCrawler(BaseCrawler):
             self.logger.warning(f"解析论文失败: {e}")
             return None
 
-    def search(
+    def _search_single(
         self,
+        query: str,
         keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 OpenAlex 论文
+        domain: str,
+        max_results: int,
+        seen_dois: set[str],
+    ) -> list[Paper]:
+        """单批关键词搜索（含跨轮去重）
 
         Args:
-            keywords: 关键词列表
-            categories: 分类列表（OpenAlex 使用概念而非 arXiv 分类）
-            max_results: 最大结果数
-            domain: 研究领域名称
+            query: 搜索查询字符串
+            keywords: 本批关键词列表（用于解析匹配）
+            domain: 研究领域
+            max_results: 本批最大结果数
+            seen_dois: 已见 DOI 集合（跨轮去重）
 
-        Yields:
-            Paper 对象
+        Returns:
+            论文列表
         """
-        # 构建搜索查询
-        query = " ".join(keywords[:5])
-        self.logger.info(f"OpenAlex 查询: {query}")
-
-        # 构建过滤器
-        filter_str = self._build_filter(keywords)
-
         page = 1
-        per_page = min(max_results, 50)  # OpenAlex 每页最多 50
+        per_page = min(max_results, 50)
         count = 0
+        results = []
 
         while count < max_results:
             params = {
@@ -181,8 +162,6 @@ class OpenAlexCrawler(BaseCrawler):
                 "page": page,
                 "sort": "publication_date:desc",
             }
-            if filter_str:
-                params["filter"] = filter_str
 
             try:
                 response = self.session.get(
@@ -193,24 +172,91 @@ class OpenAlexCrawler(BaseCrawler):
                 response.raise_for_status()
                 data = response.json()
             except requests.exceptions.RequestException as e:
-                self.logger.error(f"OpenAlex 请求失败: {e}")
+                self.logger.error("OpenAlex 查询 '%s' 失败: %s", query[:40], e)
                 break
 
-            results = data.get("results", [])
-            if not results:
+            works = data.get("results", [])
+            if not works:
                 break
 
-            for work in results:
+            for work in works:
+                if count >= max_results:
+                    break
                 paper = self._parse_work(work, keywords, domain)
-                if paper:
-                    count += 1
-                    self.logger.debug(f"[{count}] {paper.title}")
-                    yield paper
+                if not paper:
+                    continue
 
-                    if count >= max_results:
-                        break
+                # 跨轮去重（同一篇论文可能被不同关键词批次搜到）
+                if paper.doi:
+                    if paper.doi in seen_dois:
+                        continue
+                    seen_dois.add(paper.doi)
+
+                count += 1
+                results.append(paper)
 
             page += 1
-            time.sleep(0.1)  # 短暂延迟
+            time.sleep(0.1)
 
-        self.logger.info(f"OpenAlex 共返回 {count} 篇论文")
+        return results
+
+    def search(
+        self,
+        keywords: list[str],
+        categories: list[str],
+        max_results: int = 50,
+        domain: str = "",
+    ) -> Generator[Paper, None, None]:
+        """搜索 OpenAlex 论文（多轮关键词搜索）
+
+        将全部关键词分批搜索，覆盖更多方向。
+        每批独立查询，跨批自动去重。
+
+        Args:
+            keywords: 关键词列表
+            categories: 分类列表（OpenAlex 使用概念而非 arXiv 分类）
+            max_results: 最大结果数
+            domain: 研究领域名称
+
+        Yields:
+            Paper 对象
+        """
+        # 将关键词分批，每批 6 个词
+        batch_size = 6
+        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
+        per_batch = max(max_results // len(batches), 8)
+
+        self.logger.info(
+            "OpenAlex 多轮搜索: %d 批, 每批最多 %d 篇",
+            len(batches), per_batch,
+        )
+
+        seen_dois: set[str] = set()
+        total = 0
+
+        for batch_idx, batch in enumerate(batches):
+            if total >= max_results:
+                break
+
+            query = " ".join(batch)
+            remaining = max_results - total
+            batch_limit = min(per_batch, remaining)
+
+            self.logger.debug(
+                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
+            )
+
+            papers = self._search_single(
+                query=query,
+                keywords=batch,
+                domain=domain,
+                max_results=batch_limit,
+                seen_dois=seen_dois,
+            )
+
+            for paper in papers:
+                total += 1
+                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
+                yield paper
+
+        self.logger.info("OpenAlex 共返回 %d 篇论文（%d 批搜索）", total, len(batches))

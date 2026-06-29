@@ -1,9 +1,11 @@
 """爬虫基类"""
 
 from abc import ABC, abstractmethod
-from typing import Generator
+from typing import Generator, Optional
 import logging
+import requests
 
+from utils.retry import retryable_request
 from models.paper import Paper
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,48 @@ class BaseCrawler(ABC):
     def __init__(self, excluded_keywords: list[str] = None):
         self.excluded_keywords = excluded_keywords or []
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._session: Optional[requests.Session] = None
+
+    @property
+    def session(self) -> requests.Session:
+        """获取可复用的 HTTP session（延迟初始化）"""
+        if self._session is None:
+            self._session = requests.Session()
+        return self._session
+
+    @session.setter
+    def session(self, value: requests.Session) -> None:
+        """允许子类直接赋值覆盖 session"""
+        self._session = value
+
+    def request_with_retry(
+        self,
+        method: str,
+        url: str,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        **kwargs,
+    ) -> requests.Response:
+        """带指数退避重试的 HTTP 请求
+
+        Args:
+            method: HTTP 方法
+            url: 请求 URL
+            max_retries: 最大重试次数
+            base_delay: 初始延迟（秒）
+            **kwargs: 传递给 session.request 的参数
+
+        Returns:
+            requests.Response 对象
+        """
+        return retryable_request(
+            method=method,
+            url=url,
+            session=self.session,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            **kwargs,
+        )
 
     def should_exclude(self, title: str) -> bool:
         """检查论文标题是否应被排除

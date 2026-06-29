@@ -1,16 +1,22 @@
-# FMCW 论文名称爬取工具
+# 论文名称爬取工具
 
 根据研究领域关键词，从多个学术数据源爬取相关论文信息，输出为 Obsidian 兼容的 Markdown 文件。
 
 ## 功能特性
 
 - **多数据源支持**：arXiv、Semantic Scholar、Google Scholar、OpenAlex、IEEE Xplore
+- **并发爬取**：所有数据源同时爬取，总耗时 ≈ 最慢的单个数据源
+- **多轮关键词搜索**：全部 30+ 关键词分批搜索，覆盖更多方向（OpenAlex / Semantic Scholar / IEEE Xplore）
 - **智能去重**：基于 DOI、arXiv ID、标题相似度的多级去重
 - **质量筛选**：按引用数、年份、DOI、开放获取等条件筛选论文
 - **跨次去重**：记录历史爬取，避免多次运行产生重复论文
-- **标题翻译**：自动将英文论文标题翻译为中文
+- **标题翻译**：自动将英文论文标题翻译为中文，结果持久化缓存到历史记录
+- **并发翻译**：默认 5 线程并行翻译，30 篇论文约 5 秒
+- **指数退避重试**：网络错误自动重试 3 次，避免临时故障导致爬取失败
+- **多领域支持**：一次运行处理所有研究领域，每个领域生成独立文件
+- **输出目录索引**：自动生成 `_index.md` 汇总所有爬取记录
+- **配置初始化**：`--init` 一键生成带注释的默认配置文件
 - **Obsidian 兼容**：输出带 frontmatter 的 Markdown 文件
-- **灵活配置**：通过 YAML 文件定义研究领域和关键词
 - **可扩展架构**：易于添加新的数据源
 
 ## 安装
@@ -149,6 +155,18 @@ python main.py --clear-history
 
 # 不翻译论文标题
 python main.py --no-translate
+
+# 生成默认配置文件（首次使用）
+python main.py --init
+
+# 处理指定领域
+python main.py --domain "FMCW Laser Ranging"
+
+# 处理多个领域
+python main.py --domain "FMCW Laser Ranging,Lidar"
+
+# 处理所有领域
+python main.py --domain all
 ```
 
 ### 参数说明
@@ -156,12 +174,13 @@ python main.py --no-translate
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--config` | 配置文件路径 | `research_interests.yaml` |
-| `--domain` | 研究领域名称 | 配置文件中优先级最高的领域 |
+| `--domain` | 研究领域名称。支持逗号分隔（`"A,B"`）或 `all`（全部领域） | 全部领域（按 priority 排序） |
 | `--sources` | 数据源，逗号分隔 | `arxiv,semantic_scholar,google_scholar,openalex,ieee_xplore` |
 | `--max-results` | 每个数据源最大结果数 | `50` |
 | `--output` | 输出目录 | 配置文件中的 `vault_path/papers_dir` |
 | `--verbose` | 详细日志 | `False` |
-| `--dry-run` | 干跑模式 | `False` |
+| `--dry-run` | 干跑模式（预览不写入） | `False` |
+| `--init` | 生成默认配置文件 | `False` |
 | `--no-history` | 不使用历史记录（禁用跨次去重） | `False` |
 | `--clear-history` | 清除历史记录 | `False` |
 | `--min-citations` | 最低引用数（覆盖配置文件） | 配置文件值 |
@@ -243,32 +262,43 @@ sources:
 ```
 article-name-crawl/
 ├── research_interests.yaml    # 配置文件
+├── OPTIMIZATION.md            # 优化方案文档
 ├── README.md                  # 项目说明
 ├── requirements.txt           # Python 依赖
 ├── main.py                    # CLI 入口
 ├── config/
 │   ├── __init__.py
-│   └── loader.py              # 配置加载器
+│   └── loader.py              # 配置加载 + 验证
 ├── crawlers/
 │   ├── __init__.py
-│   ├── base.py                # 爬虫基类
+│   ├── base.py                # 爬虫基类（含重试机制）
 │   ├── arxiv_crawler.py       # arXiv 爬虫
-│   ├── semantic_scholar.py    # Semantic Scholar 爬虫
+│   ├── semantic_scholar.py    # Semantic Scholar 爬虫（多轮搜索）
 │   ├── google_scholar.py      # Google Scholar 爬虫
-│   ├── openalex_crawler.py    # OpenAlex 爬虫
-│   └── ieee_xplore_crawler.py # IEEE Xplore 爬虫
+│   ├── openalex_crawler.py    # OpenAlex 爬虫（多轮搜索）
+│   └── ieee_xplore_crawler.py # IEEE Xplore 爬虫（多轮搜索）
 ├── models/
 │   ├── __init__.py
 │   └── paper.py               # 论文数据模型
 ├── storage/
 │   ├── __init__.py
-│   └── markdown_writer.py     # Markdown 输出
+│   └── markdown_writer.py     # Markdown 输出 + 索引生成
+├── tests/                     # 单元测试（69 个测试用例）
+│   ├── conftest.py
+│   ├── test_config.py
+│   ├── test_dedup.py
+│   ├── test_filter.py
+│   ├── test_history.py
+│   └── test_paper_model.py
 └── utils/
     ├── __init__.py
     ├── dedup.py               # 去重逻辑
     ├── filter.py              # 质量筛选
-    ├── history.py             # 历史记录管理（跨次去重）
-    └── logger.py              # 日志配置
+    ├── history.py             # 历史记录管理（跨次去重 + 翻译缓存）
+    ├── logger.py              # 日志配置
+    ├── paper_translator.py    # 并发翻译
+    ├── retry.py               # 统一重试机制（指数退避）
+    └── translator.py          # 翻译引擎（Google Translate）
 ```
 
 ## 常见问题
@@ -288,7 +318,30 @@ A: 申请免费 API Key：
 
 ### Q: 如何添加新的研究领域？
 
-A: 编辑 `research_interests.yaml`，在 `research_domains` 下添加新的领域配置。
+A: 编辑 `research_interests.yaml`，在 `research_domains` 下添加新的领域配置。也可以先用 `--init` 生成默认配置作为参考。
+
+```yaml
+research_domains:
+  现有关键词
+  FMCW Laser Ranging:
+    keywords: [...]
+
+  # 新领域
+  Lidar:
+    keywords:
+      - lidar
+      - time-of-flight
+      - 3D imaging
+    arxiv_categories:
+      - physics.optics
+    priority: 3
+```
+
+运行 `python main.py` 自动处理所有领域。
+
+### Q: 生成默认配置？
+
+A: 运行 `python main.py --init` 生成带中文注释的 `research_interests.yaml`，包含所有配置项的说明。
 
 ### Q: 如何添加新的数据源？
 

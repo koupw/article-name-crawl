@@ -93,6 +93,9 @@ def deduplicate_with_history(
 ) -> tuple[list[Paper], dict[str, dict]]:
     """与历史记录去重
 
+    对于已历史记录的论文，恢复缓存的翻译结果到 paper.title_zh。
+    对于新论文，预创建历史记录条目（不含翻译，翻译后需调用 update_history_translations）。
+
     Args:
         papers: 论文列表
         output_path: 输出目录路径
@@ -105,9 +108,14 @@ def deduplicate_with_history(
 
     for paper in papers:
         key = get_paper_key(paper)
-        if key not in history:
+        if key in history:
+            # 从历史记录恢复缓存的翻译
+            cached_zh = history[key].get("title_zh")
+            if cached_zh:
+                paper.title_zh = cached_zh
+        else:
             new_papers.append(paper)
-            # 添加到历史记录
+            # 预创建历史条目（不含 title_zh，翻译后更新）
             history[key] = {
                 "title": paper.title,
                 "source": paper.source,
@@ -117,8 +125,23 @@ def deduplicate_with_history(
                 "arxiv_id": paper.arxiv_id,
             }
 
-    logger.info(f"跨次去重: {len(papers)} -> {len(new_papers)} 篇新论文")
+    logger.info("跨次去重: %d -> %d 篇新论文", len(papers), len(new_papers))
     return new_papers, history
+
+
+def update_history_translations(history: dict[str, dict], papers: list[Paper]) -> None:
+    """将翻译结果更新到历史记录
+
+    Args:
+        history: 历史记录字典（由 deduplicate_with_history 返回）
+        papers: 已翻译的论文列表
+    """
+    for paper in papers:
+        if not paper.title_zh:
+            continue
+        key = get_paper_key(paper)
+        if key in history:
+            history[key]["title_zh"] = paper.title_zh
 
 
 def clear_history(output_path: Path) -> None:
