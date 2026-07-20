@@ -3,6 +3,7 @@
 import re
 import logging
 from typing import Optional
+from Levenshtein import ratio
 
 from models.paper import Paper
 
@@ -40,31 +41,7 @@ def calculate_similarity(str1: str, str2: str) -> float:
     Returns:
         相似度分数 (0-1)
     """
-    try:
-        from Levenshtein import ratio
-        return ratio(str1, str2)
-    except ImportError:
-        # 如果 Levenshtein 库不可用，使用简单的 Jaccard 相似度
-        return jaccard_similarity(str1, str2)
-
-
-def jaccard_similarity(str1: str, str2: str) -> float:
-    """计算 Jaccard 相似度
-
-    Args:
-        str1: 字符串 1
-        str2: 字符串 2
-
-    Returns:
-        相似度分数 (0-1)
-    """
-    set1 = set(str1.split())
-    set2 = set(str2.split())
-    intersection = set1 & set2
-    union = set1 | set2
-    if not union:
-        return 0.0
-    return len(intersection) / len(union)
+    return ratio(str1, str2)
 
 
 def deduplicate(papers: list[Paper]) -> list[Paper]:

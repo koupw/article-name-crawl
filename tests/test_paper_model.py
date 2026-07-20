@@ -1,8 +1,6 @@
 """论文模型测试"""
 
-from datetime import datetime
 from conftest import make_paper
-from models.paper import Paper
 
 
 def test_year_from_date():
@@ -45,24 +43,3 @@ def test_date_str_no_date():
     """无日期时返回 Unknown"""
     paper = make_paper(year=None)
     assert paper.date_str == "Unknown"
-
-
-def test_to_dict_basic():
-    """to_dict 包含关键字段"""
-    paper = make_paper(
-        title="Test Paper",
-        authors=["Alice"],
-        url="https://example.com",
-    )
-    d = paper.to_dict()
-    assert d["title"] == "Test Paper"
-    assert d["source"] == "arxiv"
-    assert d["domain"] == "test"
-    assert d["title_zh"] is None
-
-
-def test_to_dict_with_translation():
-    """to_dict 包含翻译字段"""
-    paper = make_paper(title_zh="测试论文")
-    d = paper.to_dict()
-    assert d["title_zh"] == "测试论文"

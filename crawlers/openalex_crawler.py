@@ -5,7 +5,7 @@ API 文档: https://docs.openalex.org/
 """
 
 import requests
-from typing import Generator, Optional
+from typing import Optional
 from datetime import datetime
 import time
 
@@ -25,7 +25,6 @@ class OpenAlexCrawler(BaseCrawler):
     ):
         super().__init__(excluded_keywords)
         self.email = email
-        self.session = requests.Session()
         # 添加 polite pool 邮箱以获得更快响应
         if email:
             self.session.params = {"mailto": email}
@@ -130,32 +129,31 @@ class OpenAlexCrawler(BaseCrawler):
             self.logger.warning(f"解析论文失败: {e}")
             return None
 
-    def _search_single(
+    def fetch_batch(
         self,
         query: str,
         keywords: list[str],
+        categories: list[str],
         domain: str,
-        max_results: int,
-        seen_dois: set[str],
+        limit: int,
     ) -> list[Paper]:
-        """单批关键词搜索（含跨轮去重）
+        """单批关键词搜索（分页，带重试）
 
         Args:
             query: 搜索查询字符串
             keywords: 本批关键词列表（用于解析匹配）
+            categories: 分类列表（未使用）
             domain: 研究领域
-            max_results: 本批最大结果数
-            seen_dois: 已见 DOI 集合（跨轮去重）
+            limit: 本批最大结果数
 
         Returns:
             论文列表
         """
         page = 1
-        per_page = min(max_results, 50)
-        count = 0
+        per_page = min(limit, 50)
         results = []
 
-        while count < max_results:
+        while len(results) < limit:
             params = {
                 "search": query,
                 "per_page": per_page,
@@ -164,14 +162,14 @@ class OpenAlexCrawler(BaseCrawler):
             }
 
             try:
-                response = self.session.get(
+                response = self.request_with_retry(
+                    "GET",
                     f"{self.BASE_URL}/works",
                     params=params,
                     timeout=30,
                 )
-                response.raise_for_status()
                 data = response.json()
-            except requests.exceptions.RequestException as e:
+            except (requests.exceptions.RequestException, ValueError) as e:
                 self.logger.error("OpenAlex 查询 '%s' 失败: %s", query[:40], e)
                 break
 
@@ -180,83 +178,13 @@ class OpenAlexCrawler(BaseCrawler):
                 break
 
             for work in works:
-                if count >= max_results:
+                if len(results) >= limit:
                     break
                 paper = self._parse_work(work, keywords, domain)
-                if not paper:
-                    continue
-
-                # 跨轮去重（同一篇论文可能被不同关键词批次搜到）
-                if paper.doi:
-                    if paper.doi in seen_dois:
-                        continue
-                    seen_dois.add(paper.doi)
-
-                count += 1
-                results.append(paper)
+                if paper:
+                    results.append(paper)
 
             page += 1
             time.sleep(0.1)
 
         return results
-
-    def search(
-        self,
-        keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 OpenAlex 论文（多轮关键词搜索）
-
-        将全部关键词分批搜索，覆盖更多方向。
-        每批独立查询，跨批自动去重。
-
-        Args:
-            keywords: 关键词列表
-            categories: 分类列表（OpenAlex 使用概念而非 arXiv 分类）
-            max_results: 最大结果数
-            domain: 研究领域名称
-
-        Yields:
-            Paper 对象
-        """
-        # 将关键词分批，每批 6 个词
-        batch_size = 6
-        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
-        per_batch = max(max_results // len(batches), 8)
-
-        self.logger.info(
-            "OpenAlex 多轮搜索: %d 批, 每批最多 %d 篇",
-            len(batches), per_batch,
-        )
-
-        seen_dois: set[str] = set()
-        total = 0
-
-        for batch_idx, batch in enumerate(batches):
-            if total >= max_results:
-                break
-
-            query = " ".join(batch)
-            remaining = max_results - total
-            batch_limit = min(per_batch, remaining)
-
-            self.logger.debug(
-                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
-            )
-
-            papers = self._search_single(
-                query=query,
-                keywords=batch,
-                domain=domain,
-                max_results=batch_limit,
-                seen_dois=seen_dois,
-            )
-
-            for paper in papers:
-                total += 1
-                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
-                yield paper
-
-        self.logger.info("OpenAlex 共返回 %d 篇论文（%d 批搜索）", total, len(batches))

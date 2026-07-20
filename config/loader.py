@@ -1,5 +1,6 @@
 """配置文件加载器"""
 
+import os
 from pathlib import Path
 from typing import Optional
 import yaml
@@ -39,6 +40,10 @@ class AppConfig:
     semantic_scholar_api_key: str = ""
     ieee_api_key: str = ""
     openalex_email: str = ""
+    core_api_key: str = ""  # CORE API Key (免费注册 https://core.ac.uk/services/apis/)
+    translate_backend: str = "google"  # 翻译引擎: google | baidu
+    baidu_translate_app_id: str = ""
+    baidu_translate_app_key: str = ""
     filters: FilterConfig = field(default_factory=FilterConfig)
 
     @property
@@ -98,9 +103,19 @@ def load_config(config_path: str = "research_interests.yaml") -> AppConfig:
         papers_dir=data.get("papers_dir", "20_Research/Papers"),
         research_domains=domains,
         excluded_keywords=data.get("excluded_keywords", []),
-        semantic_scholar_api_key=data.get("semantic_scholar_api_key", ""),
-        ieee_api_key=data.get("ieee_api_key", ""),
-        openalex_email=data.get("openalex_email", ""),
+        semantic_scholar_api_key=data.get("semantic_scholar_api_key", "")
+        or os.environ.get("SEMANTIC_SCHOLAR_API_KEY", ""),
+        ieee_api_key=data.get("ieee_api_key", "")
+        or os.environ.get("IEEE_API_KEY", ""),
+        openalex_email=data.get("openalex_email", "")
+        or os.environ.get("OPENALEX_EMAIL", ""),
+        core_api_key=data.get("core_api_key", "")
+        or os.environ.get("CORE_API_KEY", ""),
+        translate_backend=data.get("translate_backend", "google"),
+        baidu_translate_app_id=data.get("baidu_translate_app_id", "")
+        or os.environ.get("BAIDU_TRANSLATE_APP_ID", ""),
+        baidu_translate_app_key=data.get("baidu_translate_app_key", "")
+        or os.environ.get("BAIDU_TRANSLATE_APP_KEY", ""),
         filters=filters,
     )
 
@@ -136,6 +151,17 @@ def validate_config(config: AppConfig) -> list[str]:
     if f.year_from is not None and f.year_to is not None and f.year_from > f.year_to:
         issues.append(f"filters.year_from ({f.year_from}) > year_to ({f.year_to})")
 
+    if config.translate_backend not in ("google", "baidu"):
+        issues.append(f"未知翻译引擎: {config.translate_backend}（可选: google, baidu）")
+    elif config.translate_backend == "baidu" and not (
+        config.baidu_translate_app_id and config.baidu_translate_app_key
+    ):
+        issues.append(
+            "translate_backend 为 baidu，但未配置 baidu_translate_app_id / "
+            "baidu_translate_app_key（也可通过环境变量 BAIDU_TRANSLATE_APP_ID / "
+            "BAIDU_TRANSLATE_APP_KEY 提供）"
+        )
+
     return issues
 
 
@@ -156,10 +182,16 @@ research_domains:
 excluded_keywords:
   - workshop
 
-# API 配置（可选）
+# API 配置（可选，也可用同名大写环境变量替代）
 semantic_scholar_api_key: ''
 ieee_api_key: ''
 openalex_email: ''
+core_api_key: ''                 # CORE API Key（免费注册 https://core.ac.uk/services/apis/，或用环境变量 CORE_API_KEY）
+
+# 翻译引擎配置
+translate_backend: google        # 翻译引擎: google | baidu
+baidu_translate_app_id: ''       # 百度翻译 APP ID（使用 baidu 时必填，或用环境变量 BAIDU_TRANSLATE_APP_ID）
+baidu_translate_app_key: ''      # 百度翻译 Secret Key（或用环境变量 BAIDU_TRANSLATE_APP_KEY）
 
 # 质量筛选配置
 filters:
@@ -185,33 +217,6 @@ def init_config(config_path: str) -> None:
     path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     print(f"默认配置文件已生成: {config_path}")
     print("请编辑该文件，添加你的研究领域和关键词后重新运行")
-
-
-def get_domain(config: AppConfig, domain_name: Optional[str] = None) -> ResearchDomain:
-    """获取指定研究领域配置
-
-    Args:
-        config: 应用配置
-        domain_name: 领域名称，为 None 时返回第一个领域
-
-    Returns:
-        ResearchDomain 对象
-
-    Raises:
-        ValueError: 指定的领域不存在
-    """
-    if not config.research_domains:
-        raise ValueError("配置文件中未定义研究领域")
-
-    if domain_name is None:
-        # 返回优先级最高的领域
-        return max(config.research_domains.values(), key=lambda d: d.priority)
-
-    if domain_name not in config.research_domains:
-        available = ", ".join(config.research_domains.keys())
-        raise ValueError(f"研究领域 '{domain_name}' 不存在，可用领域: {available}")
-
-    return config.research_domains[domain_name]
 
 
 def get_domains(config: AppConfig, domain_arg: Optional[str] = None) -> list[ResearchDomain]:

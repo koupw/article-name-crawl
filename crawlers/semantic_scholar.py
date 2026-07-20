@@ -1,6 +1,6 @@
 """Semantic Scholar 论文爬虫"""
 
-from typing import Generator, Optional
+from typing import Optional
 from datetime import datetime
 
 from semanticscholar import SemanticScholar
@@ -23,6 +23,9 @@ class SemanticScholarCrawler(BaseCrawler):
         "url",
         "publicationDate",
         "venue",
+        "citationCount",
+        "openAccessPdf",
+        "isOpenAccess",
     ]
 
     def __init__(
@@ -84,6 +87,16 @@ class SemanticScholarCrawler(BaseCrawler):
             if arxiv_id and not url:
                 url = f"https://arxiv.org/abs/{arxiv_id}"
 
+            # 提取 PDF URL（开放获取）
+            pdf_url = None
+            open_access_pdf = result.openAccessPdf
+            if isinstance(open_access_pdf, dict):
+                pdf_url = open_access_pdf.get("url")
+
+            # 提取引用数与开放获取状态
+            citations = result.citationCount or 0
+            is_open_access = bool(result.isOpenAccess)
+
             # 提取日期
             published_date = None
             if result.publicationDate:
@@ -99,7 +112,7 @@ class SemanticScholarCrawler(BaseCrawler):
                 authors=authors,
                 abstract=abstract.strip(),
                 url=url,
-                pdf_url=None,  # Semantic Scholar 不直接提供 PDF
+                pdf_url=pdf_url,
                 source=self.get_name(),
                 domain=domain,
                 matched_keywords=matched,
@@ -107,27 +120,29 @@ class SemanticScholarCrawler(BaseCrawler):
                 arxiv_id=arxiv_id,
                 doi=doi,
                 categories=[],
+                citations=citations,
+                is_open_access=is_open_access,
             )
         except Exception as e:
             self.logger.warning(f"解析论文失败: {e}")
             return None
 
-    def _search_batch(
+    def fetch_batch(
         self,
         query: str,
         keywords: list[str],
+        categories: list[str],
         domain: str,
         limit: int,
-        seen_dois: set[str],
     ) -> list[Paper]:
         """单批关键词搜索
 
         Args:
             query: 搜索查询
             keywords: 本批关键词
+            categories: 分类列表（未使用）
             domain: 研究领域
             limit: 本批最大结果数
-            seen_dois: 已见 DOI 集合（跨批去重）
 
         Returns:
             论文列表
@@ -147,73 +162,7 @@ class SemanticScholarCrawler(BaseCrawler):
         papers = []
         for result in results.items:
             paper = self._parse_paper(result, keywords, domain)
-            if not paper:
-                continue
-
-            # 跨轮去重
-            if paper.doi:
-                if paper.doi in seen_dois:
-                    continue
-                seen_dois.add(paper.doi)
-
-            papers.append(paper)
+            if paper:
+                papers.append(paper)
 
         return papers
-
-    def search(
-        self,
-        keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 Semantic Scholar 论文（多轮关键词搜索）
-
-        Args:
-            keywords: 关键词列表
-            categories: 分类列表（未使用）
-            max_results: 最大结果数
-            domain: 研究领域名称
-
-        Yields:
-            Paper 对象
-        """
-        # 将关键词分批
-        batch_size = 6
-        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
-        per_batch = max(max_results // len(batches), 8)
-
-        self.logger.info(
-            "Semantic Scholar 多轮搜索: %d 批, 每批最多 %d 篇",
-            len(batches), per_batch,
-        )
-
-        seen_dois: set[str] = set()
-        total = 0
-
-        for batch_idx, batch in enumerate(batches):
-            if total >= max_results:
-                break
-
-            query = " ".join(batch)
-            remaining = max_results - total
-            batch_limit = min(per_batch, remaining)
-
-            self.logger.debug(
-                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
-            )
-
-            papers = self._search_batch(
-                query=query,
-                keywords=batch,
-                domain=domain,
-                limit=batch_limit,
-                seen_dois=seen_dois,
-            )
-
-            for paper in papers:
-                total += 1
-                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
-                yield paper
-
-        self.logger.info("Semantic Scholar 共返回 %d 篇论文（%d 批搜索）", total, len(batches))

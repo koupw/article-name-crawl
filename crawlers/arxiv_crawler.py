@@ -1,7 +1,7 @@
 """arXiv 论文爬虫"""
 
 import arxiv
-from typing import Generator
+from typing import Optional
 from datetime import timezone
 
 from crawlers.base import BaseCrawler
@@ -22,21 +22,19 @@ class ArxivCrawler(BaseCrawler):
     def get_name(self) -> str:
         return "arxiv"
 
-    def _build_query(self, keywords: list[str], categories: list[str]) -> str:
-        """构建 arXiv 搜索查询
+    def build_query(self, batch: list[str], categories: list[str]) -> str:
+        """构建一批关键词的 arXiv 搜索查询
 
         Args:
-            keywords: 关键词列表
+            batch: 一批关键词
             categories: arXiv 分类列表
 
         Returns:
             查询字符串
         """
-        # 关键词查询（搜索标题和摘要）
-        # 限制关键词数量避免查询过长
+        # 关键词查询（搜索标题和摘要），对含空格的关键词加引号
         keyword_parts = []
-        for kw in keywords[:10]:
-            # 对含空格的关键词加引号
+        for kw in batch:
             if " " in kw:
                 keyword_parts.append(f'ti:"{kw}"')
                 keyword_parts.append(f'abs:"{kw}"')
@@ -53,40 +51,22 @@ class ArxivCrawler(BaseCrawler):
 
         return keyword_query
 
-    def search(
-        self,
-        keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 arXiv 论文
+    def _parse_result(self, result, keywords: list[str], domain: str) -> Optional[Paper]:
+        """解析 arXiv 结果为 Paper 对象
 
         Args:
+            result: arxiv 库返回的结果
             keywords: 关键词列表
-            categories: arXiv 分类列表
-            max_results: 最大结果数
-            domain: 研究领域名称
+            domain: 研究领域
 
-        Yields:
-            Paper 对象
+        Returns:
+            Paper 对象，解析失败返回 None
         """
-        query = self._build_query(keywords, categories)
-        self.logger.info(f"arXiv 查询: {query}")
-
-        search = arxiv.Search(
-            query=query,
-            max_results=max_results,
-            sort_by=arxiv.SortCriterion.SubmittedDate,
-            sort_order=arxiv.SortOrder.Descending,
-        )
-
-        count = 0
-        for result in self.client.results(search):
+        try:
             # 检查是否应排除
             if self.should_exclude(result.title):
                 self.logger.debug(f"排除论文: {result.title}")
-                continue
+                return None
 
             # 匹配关键词
             text = f"{result.title} {result.summary}"
@@ -98,7 +78,7 @@ class ArxivCrawler(BaseCrawler):
             # 转换日期
             published = result.published.replace(tzinfo=timezone.utc) if result.published else None
 
-            paper = Paper(
+            return Paper(
                 title=result.title.strip(),
                 authors=[str(author) for author in result.authors],
                 abstract=result.summary.strip(),
@@ -112,7 +92,44 @@ class ArxivCrawler(BaseCrawler):
                 doi=result.doi,
                 categories=categories_list,
             )
+        except Exception as e:
+            self.logger.warning(f"解析论文失败: {e}")
+            return None
 
-            count += 1
-            self.logger.debug(f"[{count}] {paper.title}")
-            yield paper
+    def fetch_batch(
+        self,
+        query: str,
+        keywords: list[str],
+        categories: list[str],
+        domain: str,
+        limit: int,
+    ) -> list[Paper]:
+        """单批关键词搜索
+
+        Args:
+            query: arXiv 查询字符串
+            keywords: 本批关键词列表
+            categories: arXiv 分类列表
+            domain: 研究领域
+            limit: 本批最大结果数
+
+        Returns:
+            论文列表
+        """
+        search = arxiv.Search(
+            query=query,
+            max_results=limit,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
+            sort_order=arxiv.SortOrder.Descending,
+        )
+
+        papers = []
+        try:
+            for result in self.client.results(search):
+                paper = self._parse_result(result, keywords, domain)
+                if paper:
+                    papers.append(paper)
+        except Exception as e:
+            self.logger.error("arXiv 查询失败: %s", e)
+
+        return papers

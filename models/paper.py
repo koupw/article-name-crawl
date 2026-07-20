@@ -45,23 +45,3 @@ class Paper:
         if not self.published_date:
             return "Unknown"
         return self.published_date.strftime("%Y-%m")
-
-    def to_dict(self) -> dict:
-        """转换为字典"""
-        return {
-            "title": self.title,
-            "title_zh": self.title_zh,
-            "authors": self.authors,
-            "abstract": self.abstract,
-            "url": self.url,
-            "pdf_url": self.pdf_url,
-            "source": self.source,
-            "domain": self.domain,
-            "matched_keywords": self.matched_keywords,
-            "published_date": self.published_date.isoformat() if self.published_date else None,
-            "arxiv_id": self.arxiv_id,
-            "doi": self.doi,
-            "categories": self.categories,
-            "citations": self.citations,
-            "is_open_access": self.is_open_access,
-        }

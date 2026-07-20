@@ -6,7 +6,7 @@ API 文档: https://developer.ieee.org/docs-read
 """
 
 import requests
-from typing import Generator, Optional
+from typing import Optional
 from datetime import datetime
 import time
 
@@ -28,20 +28,12 @@ class IEEEXploreCrawler(BaseCrawler):
         if not api_key:
             raise ValueError("IEEE Xplore 需要 API Key，请在配置文件中设置 ieee_api_key")
         self.api_key = api_key
-        self.session = requests.Session()
 
     def get_name(self) -> str:
         return "ieee_xplore"
 
-    def _build_batch_query(self, batch: list[str]) -> str:
-        """构建一批关键词的查询字符串
-
-        Args:
-            batch: 一批关键词
-
-        Returns:
-            OR 连接的查询字符串
-        """
+    def build_query(self, batch: list[str], categories: list[str]) -> str:
+        """构建一批关键词的查询字符串（OR 连接，短语加引号）"""
         query_parts = []
         for kw in batch:
             if " " in kw:
@@ -50,47 +42,46 @@ class IEEEXploreCrawler(BaseCrawler):
                 query_parts.append(kw)
         return " OR ".join(query_parts)
 
-    def _search_single(
+    def fetch_batch(
         self,
         query: str,
         keywords: list[str],
+        categories: list[str],
         domain: str,
-        max_results: int,
-        seen_dois: set[str],
+        limit: int,
     ) -> list[Paper]:
-        """单批关键词搜索
+        """单批关键词搜索（分页，带重试）
 
         Args:
             query: 查询字符串
             keywords: 本批关键词列表
+            categories: 分类列表（未使用）
             domain: 研究领域
-            max_results: 本批最大结果数
-            seen_dois: 已见 DOI 集合
+            limit: 本批最大结果数
 
         Returns:
             论文列表
         """
         start_record = 1
-        count = 0
         papers = []
 
-        while count < max_results:
+        while len(papers) < limit:
             params = {
                 "querytext": query,
                 "apikey": self.api_key,
-                "max_records": min(200, max_results - count),
+                "max_records": min(200, limit - len(papers)),
                 "start_record": start_record,
             }
 
             try:
-                response = self.session.get(
+                response = self.request_with_retry(
+                    "GET",
                     self.BASE_URL,
                     params=params,
                     timeout=30,
                 )
-                response.raise_for_status()
                 data = response.json()
-            except Exception as e:
+            except (requests.exceptions.RequestException, ValueError) as e:
                 self.logger.error("IEEE Xplore 查询 '%s' 失败: %s", query[:40], e)
                 break
 
@@ -99,19 +90,11 @@ class IEEEXploreCrawler(BaseCrawler):
                 break
 
             for article in articles:
-                if count >= max_results:
+                if len(papers) >= limit:
                     break
                 paper = self._parse_article(article, keywords, domain)
-                if not paper:
-                    continue
-
-                if paper.doi:
-                    if paper.doi in seen_dois:
-                        continue
-                    seen_dois.add(paper.doi)
-
-                count += 1
-                papers.append(paper)
+                if paper:
+                    papers.append(paper)
 
             total_records = data.get("total_records", 0)
             if start_record + len(articles) >= total_records:
@@ -121,64 +104,6 @@ class IEEEXploreCrawler(BaseCrawler):
             time.sleep(1)
 
         return papers
-
-    def search(
-        self,
-        keywords: list[str],
-        categories: list[str],
-        max_results: int = 50,
-        domain: str = "",
-    ) -> Generator[Paper, None, None]:
-        """搜索 IEEE Xplore 论文（多轮关键词搜索）
-
-        Args:
-            keywords: 关键词列表
-            categories: 分类列表（未使用）
-            max_results: 最大结果数
-            domain: 研究领域名称
-
-        Yields:
-            Paper 对象
-        """
-        # 将关键词分批
-        batch_size = 6
-        batches = [keywords[i:i + batch_size] for i in range(0, len(keywords), batch_size)]
-        per_batch = max(max_results // len(batches), 8)
-
-        self.logger.info(
-            "IEEE Xplore 多轮搜索: %d 批, 每批最多 %d 篇",
-            len(batches), per_batch,
-        )
-
-        seen_dois: set[str] = set()
-        total = 0
-
-        for batch_idx, batch in enumerate(batches):
-            if total >= max_results:
-                break
-
-            query = self._build_batch_query(batch)
-            remaining = max_results - total
-            batch_limit = min(per_batch, remaining)
-
-            self.logger.debug(
-                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
-            )
-
-            papers = self._search_single(
-                query=query,
-                keywords=batch,
-                domain=domain,
-                max_results=batch_limit,
-                seen_dois=seen_dois,
-            )
-
-            for paper in papers:
-                total += 1
-                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
-                yield paper
-
-        self.logger.info("IEEE Xplore 共返回 %d 篇论文（%d 批搜索）", total, len(batches))
 
     def _parse_article(self, article: dict, keywords: list[str], domain: str) -> Optional[Paper]:
         """解析 IEEE Xplore 文章为 Paper 对象

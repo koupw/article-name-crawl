@@ -1,0 +1,12 @@
+[browser]
+# 不自动打开浏览器（Windows IDE 内嵌浏览器常有兼容问题）
+serverAddress = "127.0.0.1"
+gatherUsageStats = false
+
+[server]
+# 明确绑定到 127.0.0.1（IPv4），避免 localhost 解析到 IPv6 导致连接失败
+address = "127.0.0.1"
+port = 8501
+headless = true
+enableCORS = false
+enableXsrfProtection = false

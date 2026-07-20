@@ -19,7 +19,11 @@ def filter_papers(papers: list[Paper], filters: FilterConfig) -> list[Paper]:
     Returns:
         符合条件的论文列表
     """
-    if not _has_any_filter(filters):
+    if not (filters.min_citations > 0
+            or filters.year_from is not None
+            or filters.year_to is not None
+            or filters.require_doi
+            or filters.open_access_only):
         return papers
 
     filtered = []
@@ -31,17 +35,6 @@ def filter_papers(papers: list[Paper], filters: FilterConfig) -> list[Paper]:
 
     logger.info(f"质量筛选: {len(papers)} -> {len(filtered)} 篇论文")
     return filtered
-
-
-def _has_any_filter(filters: FilterConfig) -> bool:
-    """检查是否有任何筛选条件"""
-    return (
-        filters.min_citations > 0
-        or filters.year_from is not None
-        or filters.year_to is not None
-        or filters.require_doi
-        or filters.open_access_only
-    )
 
 
 def _passes_filter(paper: Paper, filters: FilterConfig) -> bool:

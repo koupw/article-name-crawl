@@ -1,6 +1,35 @@
 # 使用指南
 
-## 快速开始
+## 最简方式：Web 界面
+
+不用记命令行，直接在浏览器里操作：
+
+```bash
+# 方式 1（最推荐）：双击 web\launch.vbs
+#     无 CMD 黑窗弹出，启动后浏览器打开 http://127.0.0.1:8501
+#     停止方式：双击 web\stop.vbs
+#
+# 方式 2：Python 启动器
+python web/launch.py
+#
+# 方式 3：手动启动
+streamlit run web/streamlit_app.py
+```
+
+然后在浏览器打开 **`http://127.0.0.1:8501/`**，即可：
+- 下拉选择研究领域
+- 勾选数据源（推荐 arXiv + OpenAlex）
+- 滑块调整引用数、年份
+- 实时看进度 → 表格看结果 → 按钮下载 Markdown
+
+> **Windows 连接问题？** 确保用 `web\launch.bat` 启动（已配置好 127.0.0.1 绑定和 telemetry 禁用），
+> 然后在**外部浏览器**（Chrome/Edge）手动输入 `http://127.0.0.1:8501/`，不要用 IDE 内嵌浏览器。
+
+---
+
+## CLI 快速开始
+
+如果你习惯命令行，或需要脚本化/定时任务：
 
 ```bash
 # 进入项目目录
@@ -205,7 +234,15 @@ python main.py --sources openalex --max-results 20
 python main.py --sources openalex --max-results 20 --no-translate
 ```
 
-翻译使用 Google Translate，无需 API Key。
+翻译默认使用 Google Translate，无需 API Key。也可在配置文件中切换为百度翻译：
+
+```yaml
+translate_backend: baidu
+baidu_translate_app_id: '你的 APP ID'      # 或用环境变量 BAIDU_TRANSLATE_APP_ID
+baidu_translate_app_key: '你的 Secret Key' # 或用环境变量 BAIDU_TRANSLATE_APP_KEY
+```
+
+> 注意：百度翻译免费版限制 1 QPS，使用百度引擎时自动转为单线程串行翻译，速度较慢。
 
 **性能优化**：
 - **并发翻译**：默认 5 线程同时翻译，30 篇论文约 5 秒完成
@@ -225,9 +262,11 @@ python main.py --init
 | 需求 | 命令 |
 |------|------|
 | 快速预览 | `python main.py --dry-run --sources openalex` |
+| 最稳组合（无需 Key） | `python main.py --sources arxiv,openalex,crossref` |
+| 含 PDF 下载 | `python main.py --sources arxiv,openalex,crossref,core` |
 | 高质量论文 | `python main.py --sources openalex --min-citations 10` |
 | 最新论文 | `python main.py --sources arxiv,openalex --year-from 2024` |
-| 完整爬取 | `python main.py --sources arxiv,openalex --max-results 100` |
+| 完整爬取 | `python main.py --sources arxiv,openalex,crossref --max-results 100` |
 | 多领域爬取 | `python main.py --domain all` |
 | 生成默认配置 | `python main.py --init` |
 | 清除重爬 | `python main.py --clear-history` |
@@ -239,6 +278,8 @@ python main.py --init
 |--------|------|----------|
 | `arxiv` | 免费、稳定、预印本 | 获取最新研究 |
 | `openalex` | 免费、有引用数、覆盖广 | 日常使用首选 |
+| `crossref` | 免费、DOI 权威、1.3亿+文献 | 最稳三角之一，元数据最准 |
+| `core` | 免费 Key、真正 PDF 下载链接 | 需要下载 PDF 时必选 |
 | `semantic_scholar` | 有引用数、需 API Key | 补充引用数据 |
 | `ieee_xplore` | 工程技术权威 | 工程领域研究 |
 | `google_scholar` | 覆盖最广、不稳定 | 不推荐 |
@@ -247,11 +288,11 @@ python main.py --init
 
 | 筛选条件 | 说明 | 支持的数据源 |
 |----------|------|--------------|
-| `min_citations` | 最低引用数 | OpenAlex, Semantic Scholar |
+| `min_citations` | 最低引用数 | OpenAlex, Semantic Scholar, Crossref, CORE |
 | `year_from` | 起始年份 | 所有数据源 |
 | `year_to` | 结束年份 | 所有数据源 |
 | `require_doi` | 必须有 DOI | 所有数据源 |
-| `open_access_only` | 只要开放获取 | OpenAlex |
+| `open_access_only` | 只要开放获取 | OpenAlex, CORE |
 
 ## 去重机制
 
@@ -378,7 +419,6 @@ sources:
 ```
 article-name-crawl/
 ├── research_interests.yaml    # 配置文件
-├── OPTIMIZATION.md            # 优化方案文档
 ├── README.md                  # 项目说明
 ├── USAGE.md                   # 使用指南（本文件）
 ├── requirements.txt           # Python 依赖
@@ -388,21 +428,24 @@ article-name-crawl/
 │   └── loader.py              # 配置加载 + 验证
 ├── crawlers/                  # 爬虫模块
 │   ├── __init__.py
-│   ├── base.py                # 爬虫基类（含重试机制）
+│   ├── base.py                # 爬虫基类（含重试机制 + 多轮搜索模板）
 │   ├── arxiv_crawler.py       # arXiv 爬虫
-│   ├── semantic_scholar.py    # Semantic Scholar 爬虫（多轮搜索）
+│   ├── semantic_scholar.py    # Semantic Scholar 爬虫
 │   ├── google_scholar.py      # Google Scholar 爬虫
-│   ├── openalex_crawler.py    # OpenAlex 爬虫（多轮搜索）
-│   └── ieee_xplore_crawler.py # IEEE Xplore 爬虫（多轮搜索）
+│   ├── openalex_crawler.py    # OpenAlex 爬虫
+│   ├── ieee_xplore_crawler.py # IEEE Xplore 爬虫
+│   ├── crossref_crawler.py    # Crossref 爬虫（DOI 权威）
+│   └── core_crawler.py        # CORE 爬虫（PDF 下载链接）
 ├── models/
 │   ├── __init__.py
 │   └── paper.py               # 论文数据模型
 ├── storage/
 │   ├── __init__.py
 │   └── markdown_writer.py     # Markdown 输出 + 索引生成
-├── tests/                     # 单元测试（69 个测试用例）
+├── tests/                     # 单元测试（108 个测试用例）
 │   ├── conftest.py            # 测试夹具与工厂函数
 │   ├── test_config.py         # 配置验证测试
+│   ├── test_crawlers.py       # 爬虫实例化/解析/分批模板/重试测试
 │   ├── test_dedup.py          # 去重逻辑测试
 │   ├── test_filter.py         # 质量筛选测试
 │   ├── test_history.py        # 历史记录测试

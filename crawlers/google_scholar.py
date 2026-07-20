@@ -18,36 +18,19 @@ class GoogleScholarCrawler(BaseCrawler):
 
     def __init__(
         self,
-        use_proxy: bool = False,
-        proxy_url: Optional[str] = None,
         excluded_keywords: list[str] = None,
     ):
         super().__init__(excluded_keywords)
-        self.use_proxy = use_proxy
-        self.proxy_url = proxy_url
         self._scholarly = None
         self._setup_scholarly()
 
     def _setup_scholarly(self):
         """初始化 scholarly 库"""
         try:
-            from scholarly import scholarly, ProxyGenerator
+            from scholarly import scholarly
 
             self._scholarly = scholarly
-
-            if self.use_proxy and self.proxy_url:
-                pg = ProxyGenerator()
-                pg.SingleProxy(http=self.proxy_url, https=self.proxy_url)
-                scholarly.use_proxy(pg)
-                self.logger.info(f"Google Scholar: 使用代理 {self.proxy_url}")
-            elif self.use_proxy:
-                pg = ProxyGenerator()
-                pg.FreeProxies()
-                scholarly.use_proxy(pg)
-                self.logger.info("Google Scholar: 使用免费代理")
-            else:
-                self.logger.info("Google Scholar: 无代理")
-
+            self.logger.info("Google Scholar: 已初始化")
         except ImportError:
             self.logger.error("scholarly 库未安装，请运行: pip install scholarly")
             self._scholarly = None
@@ -165,8 +148,9 @@ class GoogleScholarCrawler(BaseCrawler):
 
             while count < max_results:
                 try:
-                    result = next(search_query)
+                    # 先延迟再请求，避免触发反爬
                     self._random_delay()
+                    result = next(search_query)
 
                     paper = self._parse_paper(result, keywords, domain)
                     if paper:

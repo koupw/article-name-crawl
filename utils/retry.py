@@ -9,6 +9,8 @@
 import time
 import logging
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 # 可重试的 HTTP 状态码
@@ -62,7 +64,7 @@ def retryable_request(
             response.raise_for_status()
             return response
 
-        except (ConnectionError, TimeoutError) as e:
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_error = e
             if attempt < max_retries - 1:
                 delay = base_delay * (backoff**attempt)

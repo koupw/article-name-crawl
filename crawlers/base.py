@@ -6,13 +6,22 @@ import logging
 import requests
 
 from utils.retry import retryable_request
+from utils.dedup import normalize_title
 from models.paper import Paper
 
 logger = logging.getLogger(__name__)
 
 
 class BaseCrawler(ABC):
-    """爬虫基类，定义统一接口"""
+    """爬虫基类，定义统一接口
+
+    子类实现 fetch_batch() 即可获得多轮关键词分批搜索能力（模板方法）；
+    搜索流程差异较大的子类（如 Google Scholar）可直接覆盖 search()。
+    """
+
+    # 多轮搜索：每批关键词数量、每批最小结果数
+    KEYWORD_BATCH_SIZE = 6
+    MIN_PER_BATCH = 8
 
     def __init__(self, excluded_keywords: list[str] = None):
         self.excluded_keywords = excluded_keywords or []
@@ -25,11 +34,6 @@ class BaseCrawler(ABC):
         if self._session is None:
             self._session = requests.Session()
         return self._session
-
-    @session.setter
-    def session(self, value: requests.Session) -> None:
-        """允许子类直接赋值覆盖 session"""
-        self._session = value
 
     def request_with_retry(
         self,
@@ -85,7 +89,6 @@ class BaseCrawler(ABC):
         text_lower = text.lower()
         return [kw for kw in keywords if kw.lower() in text_lower]
 
-    @abstractmethod
     def search(
         self,
         keywords: list[str],
@@ -93,7 +96,10 @@ class BaseCrawler(ABC):
         max_results: int = 50,
         domain: str = "",
     ) -> Generator[Paper, None, None]:
-        """搜索论文
+        """多轮关键词分批搜索（模板方法）
+
+        将全部关键词分批，逐批调用 fetch_batch()，批间按
+        DOI / arXiv ID / 标准化标题自动去重。
 
         Args:
             keywords: 关键词列表
@@ -104,7 +110,102 @@ class BaseCrawler(ABC):
         Yields:
             Paper 对象
         """
-        pass
+        if not keywords:
+            self.logger.warning("%s: 关键词为空，跳过搜索", self.get_name())
+            return
+
+        batches = [
+            keywords[i:i + self.KEYWORD_BATCH_SIZE]
+            for i in range(0, len(keywords), self.KEYWORD_BATCH_SIZE)
+        ]
+        per_batch = max(max_results // len(batches), self.MIN_PER_BATCH)
+
+        self.logger.info(
+            "%s 多轮搜索: %d 批, 每批最多 %d 篇",
+            self.get_name(), len(batches), per_batch,
+        )
+
+        seen: set[str] = set()
+        total = 0
+
+        for batch_idx, batch in enumerate(batches):
+            if total >= max_results:
+                break
+
+            query = self.build_query(batch, categories)
+            remaining = max_results - total
+            batch_limit = min(per_batch, remaining)
+
+            self.logger.debug(
+                "第 %d/%d 批: %s", batch_idx + 1, len(batches), query[:80],
+            )
+
+            papers = self.fetch_batch(
+                query=query,
+                keywords=batch,
+                categories=categories,
+                domain=domain,
+                limit=batch_limit,
+            )
+
+            for paper in papers:
+                if total >= max_results:
+                    break
+                key = self._paper_key(paper)
+                if key in seen:
+                    continue
+                seen.add(key)
+                total += 1
+                self.logger.debug("[%d/%d] %s", total, max_results, paper.title[:70])
+                yield paper
+
+        self.logger.info(
+            "%s 共返回 %d 篇论文（%d 批搜索）",
+            self.get_name(), total, len(batches),
+        )
+
+    def build_query(self, batch: list[str], categories: list[str]) -> str:
+        """构建一批关键词的查询字符串（子类可覆盖）
+
+        Args:
+            batch: 一批关键词
+            categories: 分类列表
+
+        Returns:
+            查询字符串
+        """
+        return " ".join(batch)
+
+    def fetch_batch(
+        self,
+        query: str,
+        keywords: list[str],
+        categories: list[str],
+        domain: str,
+        limit: int,
+    ) -> list[Paper]:
+        """执行单批搜索（子类必须实现此方法，或覆盖 search()）
+
+        Args:
+            query: 查询字符串
+            keywords: 本批关键词列表（用于解析匹配）
+            categories: 分类列表
+            domain: 研究领域
+            limit: 本批最大结果数
+
+        Returns:
+            论文列表
+        """
+        raise NotImplementedError("子类必须实现 fetch_batch() 或覆盖 search()")
+
+    @staticmethod
+    def _paper_key(paper: Paper) -> str:
+        """跨批去重键：DOI > arXiv ID > 标准化标题"""
+        if paper.doi:
+            return f"doi:{paper.doi.lower().strip()}"
+        if paper.arxiv_id:
+            return f"arxiv:{paper.arxiv_id.strip()}"
+        return f"title:{normalize_title(paper.title)}"
 
     @abstractmethod
     def get_name(self) -> str:

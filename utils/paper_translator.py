@@ -9,15 +9,25 @@ from utils.translator import translate_to_chinese
 logger = logging.getLogger(__name__)
 
 
-def translate_paper_titles(papers: list[Paper], max_workers: int = 5) -> list[Paper]:
+def translate_paper_titles(
+    papers: list[Paper],
+    max_workers: int = 5,
+    backend: str = "google",
+    baidu_app_id: str = "",
+    baidu_app_key: str = "",
+) -> list[Paper]:
     """批量翻译论文标题
 
     使用 ThreadPoolExecutor 并发翻译，显著缩短翻译时间。
     已有翻译（title_zh 不为空）的论文跳过翻译步骤。
+    百度翻译免费版限制 1 QPS，使用 baidu 时强制单线程串行。
 
     Args:
         papers: 论文列表
         max_workers: 并发翻译线程数
+        backend: 翻译引擎 (google | baidu)
+        baidu_app_id: 百度翻译 APP ID
+        baidu_app_key: 百度翻译 Secret Key
 
     Returns:
         添加了中文标题的论文列表
@@ -33,13 +43,17 @@ def translate_paper_titles(papers: list[Paper], max_workers: int = 5) -> list[Pa
         logger.info("所有论文已有翻译，跳过翻译步骤")
         return papers
 
-    logger.info("开始翻译 %d 篇论文标题（%d 篇已有缓存，%d 并发）",
-                len(to_translate), already_present, max_workers)
+    if backend == "baidu":
+        max_workers = 1  # 百度免费版 1 QPS，并发会触发限流
+
+    logger.info("开始翻译 %d 篇论文标题（%s 引擎，%d 篇已有缓存，%d 并发）",
+                len(to_translate), backend, already_present, max_workers)
 
     success = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
-            executor.submit(_translate_one, p): p for p in to_translate
+            executor.submit(_translate_one, p, backend, baidu_app_id, baidu_app_key): p
+            for p in to_translate
         }
 
         for future in as_completed(future_map):
@@ -54,8 +68,18 @@ def translate_paper_titles(papers: list[Paper], max_workers: int = 5) -> list[Pa
     return papers
 
 
-def _translate_one(paper: Paper) -> None:
+def _translate_one(
+    paper: Paper,
+    backend: str = "google",
+    baidu_app_id: str = "",
+    baidu_app_key: str = "",
+) -> None:
     """翻译单篇论文标题（在线程池中执行）"""
-    title_zh = translate_to_chinese(paper.title)
+    title_zh = translate_to_chinese(
+        paper.title,
+        backend=backend,
+        baidu_app_id=baidu_app_id,
+        baidu_app_key=baidu_app_key,
+    )
     if title_zh:
         paper.title_zh = title_zh

@@ -2,13 +2,15 @@
 
 import argparse
 import logging
+import re
 import sys
+from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from config.loader import load_config, validate_config, get_domains, init_config
 from models.paper import Paper
@@ -17,6 +19,8 @@ from crawlers.semantic_scholar import SemanticScholarCrawler
 from crawlers.google_scholar import GoogleScholarCrawler
 from crawlers.openalex_crawler import OpenAlexCrawler
 from crawlers.ieee_xplore_crawler import IEEEXploreCrawler
+from crawlers.crossref_crawler import CrossrefCrawler
+from crawlers.core_crawler import CoreCrawler
 from utils.dedup import deduplicate
 from utils.filter import filter_papers
 from utils.history import deduplicate_with_history, save_history, clear_history, update_history_translations
@@ -28,7 +32,34 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 # 可用数据源
-AVAILABLE_SOURCES = ["arxiv", "semantic_scholar", "google_scholar", "openalex", "ieee_xplore"]
+AVAILABLE_SOURCES = [
+    "arxiv", "semantic_scholar", "google_scholar",
+    "openalex", "ieee_xplore", "crossref", "core",
+]
+
+# Rich markup 标签正则（用于 Web 回调时清理颜色标记）
+# 匹配 [bold]、[green]、[/bold cyan]、[link http://x] 等，保留普通方括号内容
+_RICH_ATTRS = "bold|dim|green|yellow|red|cyan|italic|underline|strike|reverse|blink|hidden"
+_RICH_TAG_RE = re.compile(
+    rf"\[(?:/?)(?:(?:{_RICH_ATTRS})(?:\s+(?:{_RICH_ATTRS}))*|link\s[^\]]*)\]"
+)
+
+
+def _strip_rich_markup(text: str) -> str:
+    """移除 Rich 终端颜色标记，使消息适合纯文本/Web 显示"""
+    return _RICH_TAG_RE.sub("", text).strip()
+
+
+@dataclass
+class RunOptions:
+    """运行选项（解耦 CLI argparse，支持 Web/CLI 双入口）"""
+
+    max_results: int = 50
+    dry_run: bool = False
+    no_history: bool = False
+    no_translate: bool = False
+    min_citations: Optional[int] = None
+    year_from: Optional[int] = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,6 +188,23 @@ def get_crawlers(
                     excluded_keywords=config.excluded_keywords,
                 )
             )
+        elif source == "crossref":
+            crawlers.append(
+                CrossrefCrawler(
+                    email=config.openalex_email if config.openalex_email else None,
+                    excluded_keywords=config.excluded_keywords,
+                )
+            )
+        elif source == "core":
+            if not config.core_api_key:
+                logger.warning("CORE 需要 API Key，跳过该数据源。免费注册: https://core.ac.uk/services/apis/")
+                continue
+            crawlers.append(
+                CoreCrawler(
+                    api_key=config.core_api_key,
+                    excluded_keywords=config.excluded_keywords,
+                )
+            )
         else:
             logger.warning(f"未知数据源: {source}")
 
@@ -235,10 +283,11 @@ def crawl_papers(
 def process_domain(
     domain_config,
     config,
-    args,
+    run_options: RunOptions,
     crawlers: list,
     output_path: Path,
-) -> Optional[Path]:
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> tuple[Optional[Path], list]:
     """处理单个研究领域的完整流水线
 
     爬取 → 去重 → 筛选 → 跨次去重 → 翻译 → 写入
@@ -246,74 +295,90 @@ def process_domain(
     Args:
         domain_config: 研究领域配置
         config: 应用配置
-        args: 命令行参数
+        run_options: 运行选项
         crawlers: 爬虫实例列表（已在外部创建）
         output_path: 输出目录
+        progress_callback: 可选进度回调，传入字符串消息。
+                          提供时用于 Web 等替代终端输出；
+                          为 None 时使用 Rich Console（CLI 模式）。
 
     Returns:
-        输出文件路径，无新论文时返回 None
+        (输出文件路径, 论文列表)。无新论文时路径为 None，但论文列表
+        仍可能包含预览数据（dry_run 时有用）。
     """
-    console.print(f"\n[bold cyan]处理领域: {domain_config.name}[/bold cyan]")
-    console.print(f"关键词数量: {len(domain_config.keywords)}")
-    console.print(f"arXiv 分类: {', '.join(domain_config.arxiv_categories)}")
+    def _notify(msg: str) -> None:
+        if progress_callback is not None:
+            progress_callback(_strip_rich_markup(msg))
+        else:
+            console.print(msg)
+
+    _notify(f"\n[bold cyan]处理领域: {domain_config.name}[/bold cyan]")
+    _notify(f"关键词数量: {len(domain_config.keywords)}")
+    _notify(f"arXiv 分类: {', '.join(domain_config.arxiv_categories)}")
 
     # 爬取论文
-    with console.status("[bold green]正在爬取论文..."):
+    ctx = console.status("[bold green]正在爬取论文...") if progress_callback is None else nullcontext()
+    with ctx:
         all_papers = crawl_papers(
             crawlers=crawlers,
             keywords=domain_config.keywords,
             categories=domain_config.arxiv_categories,
             domain=domain_config.name,
-            max_results=args.max_results,
+            max_results=run_options.max_results,
         )
-    console.print(f"[bold]共爬取 {len(all_papers)} 篇论文[/bold]")
+    _notify(f"[bold]共爬取 {len(all_papers)} 篇论文[/bold]")
 
     if not all_papers:
-        console.print("[yellow]未爬取到任何论文，跳过后续处理[/yellow]")
-        return None
+        _notify("[yellow]未爬取到任何论文，跳过后续处理[/yellow]")
+        return None, []
 
     # 单次运行内去重
-    console.print("[bold]正在去重...[/bold]")
+    _notify("[bold]正在去重...[/bold]")
     unique_papers = deduplicate(all_papers)
-    console.print(f"[bold]单次去重后: {len(unique_papers)} 篇论文[/bold]")
+    _notify(f"[bold]单次去重后: {len(unique_papers)} 篇论文[/bold]")
 
     # 质量筛选
-    console.print("[bold]正在质量筛选...[/bold]")
+    _notify("[bold]正在质量筛选...[/bold]")
     unique_papers = filter_papers(unique_papers, config.filters)
-    console.print(f"[bold]筛选后: {len(unique_papers)} 篇论文[/bold]")
+    _notify(f"[bold]筛选后: {len(unique_papers)} 篇论文[/bold]")
 
     if not unique_papers:
-        console.print("[yellow]筛选后无可用论文[/yellow]")
-        return None
+        _notify("[yellow]筛选后无可用论文[/yellow]")
+        return None, []
 
-    if args.dry_run:
-        console.print("\n[yellow]干跑模式，不写入文件[/yellow]")
+    if run_options.dry_run:
+        _notify("\n[yellow]干跑模式，不写入文件[/yellow]")
         for i, paper in enumerate(unique_papers[:10], 1):
-            console.print(f"  {i}. {paper.title}")
+            _notify(f"  {i}. {paper.title}")
         if len(unique_papers) > 10:
-            console.print(f"  ... 还有 {len(unique_papers) - 10} 篇")
-        return None
+            _notify(f"  ... 还有 {len(unique_papers) - 10} 篇")
+        return None, unique_papers
 
     # 跨次去重（在翻译之前，避免翻译已爬取的论文）
     history = {}  # 确保 history 变量存在
-    if not args.no_history:
-        console.print("[bold]正在跨次去重...[/bold]")
+    if not run_options.no_history:
+        _notify("[bold]正在跨次去重...[/bold]")
         unique_papers, history = deduplicate_with_history(unique_papers, output_path)
-        console.print(f"[bold]跨次去重后: {len(unique_papers)} 篇新论文[/bold]")
+        _notify(f"[bold]跨次去重后: {len(unique_papers)} 篇新论文[/bold]")
         if not unique_papers:
-            console.print("[yellow]所有论文已在历史记录中，无需写入[/yellow]")
-            return None
+            _notify("[yellow]所有论文已在历史记录中，无需写入[/yellow]")
+            return None, []
 
     # 翻译论文标题
-    if not args.no_translate and unique_papers:
-        console.print("[bold]正在翻译论文标题...[/bold]")
-        unique_papers = translate_paper_titles(unique_papers)
-        console.print("[bold]翻译完成[/bold]")
-        if not args.no_history:
+    if not run_options.no_translate and unique_papers:
+        _notify(f"[bold]正在翻译论文标题（{config.translate_backend}）...[/bold]")
+        unique_papers = translate_paper_titles(
+            unique_papers,
+            backend=config.translate_backend,
+            baidu_app_id=config.baidu_translate_app_id,
+            baidu_app_key=config.baidu_translate_app_key,
+        )
+        _notify("[bold]翻译完成[/bold]")
+        if not run_options.no_history:
             update_history_translations(history, unique_papers)
 
     # 写入文件
-    console.print("[bold]正在写入文件...[/bold]")
+    _notify("[bold]正在写入文件...[/bold]")
     try:
         file_path = write_markdown(
             papers=unique_papers,
@@ -321,17 +386,17 @@ def process_domain(
             domain=domain_config.name,
             language=config.language,
         )
-        console.print(f"[bold green]完成！文件已保存到: {file_path}[/bold green]")
+        _notify(f"[bold green]完成！文件已保存到: {file_path}[/bold green]")
 
-        if not args.no_history:
+        if not run_options.no_history:
             save_history(output_path, history)
-            console.print(f"[dim]历史记录已更新: {len(history)} 篇论文[/dim]")
+            _notify(f"[dim]历史记录已更新: {len(history)} 篇论文[/dim]")
 
-        return file_path
+        return file_path, unique_papers
     except Exception as e:
         logger.error("写入文件失败: %s", e)
-        console.print(f"[red]写入文件失败: {e}[/red]")
-        return None
+        _notify(f"[red]写入文件失败: {e}[/red]")
+        return None, unique_papers
 
 
 def main():
@@ -406,17 +471,27 @@ def main():
     # 初始化爬虫（在所有领域间共享）
     crawlers = get_crawlers(sources=sources, config=config)
 
+    # 构建运行选项
+    run_options = RunOptions(
+        max_results=args.max_results,
+        dry_run=args.dry_run,
+        no_history=args.no_history,
+        no_translate=args.no_translate,
+        min_citations=args.min_citations,
+        year_from=args.year_from,
+    )
+
     # 处理每个领域
     processed = 0
     for domain_config in domains:
-        result = process_domain(
+        file_path, _ = process_domain(
             domain_config=domain_config,
             config=config,
-            args=args,
+            run_options=run_options,
             crawlers=crawlers,
             output_path=output_path,
         )
-        if result:
+        if file_path:
             processed += 1
 
     # 总结
