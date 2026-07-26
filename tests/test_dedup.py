@@ -2,7 +2,7 @@
 
 import pytest
 from conftest import make_paper
-from utils.dedup import deduplicate, normalize_title, calculate_similarity
+from utils.dedup import deduplicate, normalize_title, calculate_similarity, token_overlap
 
 
 # ========== DOI 去重 ==========
@@ -116,3 +116,35 @@ def test_calculate_similarity_different():
     """完全不同字符串相似度接近 0"""
     sim = calculate_similarity("aaa bbb ccc", "xxx yyy zzz")
     assert sim < 0.3
+
+
+# ========== Token Blocking 预筛 ==========
+
+def test_token_overlap_identical():
+    """相同标题 token 重叠度为 1.0"""
+    assert token_overlap("fmcw laser ranging", "fmcw laser ranging") == 1.0
+
+
+def test_token_overlap_partial():
+    """部分重叠"""
+    # "fmcw laser ranging" vs "fmcw lidar ranging": 2/4 = 0.5
+    assert token_overlap("fmcw laser ranging", "fmcw lidar ranging") == 0.5
+
+
+def test_token_overlap_zero():
+    """无重叠应为 0"""
+    assert token_overlap("aaa bbb ccc", "xxx yyy zzz") == 0.0
+
+
+def test_token_blocking_preserves_dedup():
+    """token blocking 不应导致误删：相似标题仍被去重"""
+    p1 = make_paper(title="FMCW Laser Ranging System")
+    p2 = make_paper(title="FMCW Laser Ranging Systems")
+    assert len(deduplicate([p1, p2])) == 1
+
+
+def test_token_blocking_preserves_unique():
+    """token blocking 不应导致误删：完全不同标题保留"""
+    p1 = make_paper(title="Laser Ranging Using FMCW")
+    p2 = make_paper(title="Laser Welding Temperature Control")
+    assert len(deduplicate([p1, p2])) == 2

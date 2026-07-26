@@ -27,6 +27,8 @@ env("STREAMLIT_SERVER_HEADLESS") = "true"
 
 cmd = """" & streamlitExe & """ run """ & projectRoot & "\web\streamlit_app.py"""
 
+' 设置工作目录为项目根目录（确保相对路径如 research_interests.yaml 能正确加载）
+WshShell.CurrentDirectory = projectRoot
 WshShell.Run cmd, 0, False
 
 MsgBox "Paper Crawler Web UI started!" & vbCrLf & vbCrLf & _

@@ -26,6 +26,8 @@ output/
 !USAGE.md
 
 # 历史记录
+history_index.json
+translation_cache.json
 crawled_papers.json
 
 # IDE
@@ -57,8 +59,8 @@ Desktop.ini
 # Claude Code
 .claude/
 
+# MinerU API Token（关键安全项，永久不入 git）
+mineru-api-client/config.json
+
 # 环境变量文件（含密钥）
 .env
-
-# 确保优化方案文档被跟踪
-!OPTIMIZATION.md

@@ -69,11 +69,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python main.py                                    # 爬取所有领域
+  python main.py                                    # 爬取所有领域（默认 arxiv+openalex+crossref）
   python main.py --domain "FMCW Laser Ranging"      # 爬取指定领域
   python main.py --sources arxiv,semantic_scholar    # 指定数据源
   python main.py --max-results 100                   # 每个数据源最多 100 篇
   python main.py --verbose                           # 详细日志
+  python main.py --dry-run --max-results 20          # 干跑预览
         """,
     )
 
@@ -88,7 +89,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--sources",
-        help=f"数据源，逗号分隔 (可选: {','.join(AVAILABLE_SOURCES)})",
+        help=(
+            f"数据源，逗号分隔。默认使用最稳组合 arxiv,openalex,crossref。"
+            f"可选: {','.join(AVAILABLE_SOURCES)}"
+        ),
     )
     parser.add_argument(
         "--max-results",
@@ -463,10 +467,13 @@ def main():
                 console.print(f"可用数据源: {', '.join(AVAILABLE_SOURCES)}")
                 sys.exit(1)
     else:
-        sources = AVAILABLE_SOURCES
+        # 默认使用最稳定的官方 API 组合（零配置即可用）
+        sources = ["arxiv", "openalex", "crossref"]
 
     console.print(f"数据源: {', '.join(sources)}")
     console.print(f"最大结果数: {args.max_results} / 数据源")
+    if set(sources) == {"arxiv", "openalex", "crossref"}:
+        console.print("[dim]使用默认最优组合。如需全部数据源，加 --sources all[/dim]")
 
     # 初始化爬虫（在所有领域间共享）
     crawlers = get_crawlers(sources=sources, config=config)

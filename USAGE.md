@@ -22,7 +22,7 @@ streamlit run web/streamlit_app.py
 - 滑块调整引用数、年份
 - 实时看进度 → 表格看结果 → 按钮下载 Markdown
 
-> **Windows 连接问题？** 确保用 `web\launch.bat` 启动（已配置好 127.0.0.1 绑定和 telemetry 禁用），
+> **Windows 连接问题？** 确保用 `web\launch.vbs` 双击启动（已配置好 127.0.0.1 绑定和 telemetry 禁用），
 > 然后在**外部浏览器**（Chrome/Edge）手动输入 `http://127.0.0.1:8501/`，不要用 IDE 内嵌浏览器。
 
 ---
@@ -217,11 +217,11 @@ python main.py --sources arxiv,openalex,semantic_scholar --max-results 100 --yea
 默认输出到配置文件中的 `vault_path/papers_dir`：
 
 ```
-E:/WorkSpace/ClaudeWork/article-name-crawl/Papers/
+E:/WorkSpace/ClaudeWork/article-name-crawl/papers/_output/
 ├── _index.md                          # 📚 索引（汇总所有列表文件）
 ├── FMCW_Laser_Ranging_20260629.md     # 论文列表（每次爬取生成一个文件）
 ├── FMCW_Laser_Ranging_20260604.md     # 历史爬取记录
-└── crawled_papers.json                # 历史记录（跨次去重 + 翻译缓存）
+└── history_index.json + translation_cache.json                # 历史记录（跨次去重 + 翻译缓存）
 ```
 
 ## 标题翻译
@@ -246,7 +246,7 @@ baidu_translate_app_key: '你的 Secret Key' # 或用环境变量 BAIDU_TRANSLAT
 
 **性能优化**：
 - **并发翻译**：默认 5 线程同时翻译，30 篇论文约 5 秒完成
-- **翻译持久化**：翻译结果自动缓存到 `crawled_papers.json`，下次运行相同论文不再请求翻译
+- **翻译持久化**：翻译结果自动缓存到 `history_index.json + translation_cache.json`，下次运行相同论文不再请求翻译
 
 ## 配置初始化
 
@@ -261,12 +261,13 @@ python main.py --init
 
 | 需求 | 命令 |
 |------|------|
-| 快速预览 | `python main.py --dry-run --sources openalex` |
-| 最稳组合（无需 Key） | `python main.py --sources arxiv,openalex,crossref` |
-| 含 PDF 下载 | `python main.py --sources arxiv,openalex,crossref,core` |
-| 高质量论文 | `python main.py --sources openalex --min-citations 10` |
-| 最新论文 | `python main.py --sources arxiv,openalex --year-from 2024` |
-| 完整爬取 | `python main.py --sources arxiv,openalex,crossref --max-results 100` |
+| **默认爬取（最优三角，零配置）** | `python main.py` |
+| 快速预览 | `python main.py --dry-run` |
+| 含 PDF 下载（需 CORE Key） | `python main.py --sources arxiv,openalex,crossref,core` |
+| 全部数据源 | `python main.py --sources arxiv,openalex,crossref,semantic_scholar,ieee_xplore,core` |
+| 高质量论文 | `python main.py --min-citations 10` |
+| 最新论文 | `python main.py --year-from 2024` |
+| 完整爬取 | `python main.py --max-results 100` |
 | 多领域爬取 | `python main.py --domain all` |
 | 生成默认配置 | `python main.py --init` |
 | 清除重爬 | `python main.py --clear-history` |
@@ -302,7 +303,7 @@ python main.py --init
 - 标题相似度 > 85% → 重复
 
 ### 跨次去重（默认开启）
-- 记录历史爬取到 `crawled_papers.json`
+- 记录历史爬取到 `history_index.json + translation_cache.json`
 - 自动跳过已爬取的论文
 - 使用 `--no-history` 禁用
 - 使用 `--clear-history` 清除历史
@@ -352,7 +353,7 @@ python main.py --sources openalex --no-translate
 
 ### Q: 翻译会重复请求 Google API 吗？
 
-不会。翻译结果会自动缓存到 `crawled_papers.json`，下次运行相同论文直接从缓存恢复，不发起翻译请求。
+不会。翻译结果会自动缓存到 `history_index.json + translation_cache.json`，下次运行相同论文直接从缓存恢复，不发起翻译请求。
 
 ### Q: 如何配置多个研究领域？
 

@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # 标题相似度阈值
 SIMILARITY_THRESHOLD = 0.85
 
+# Token blocking 阈值：token 重叠度低于此值时直接跳过 Levenshtein 比较
+# 保守值 0.1（10%），对短标题安全，对长标题能显著减少比较次数
+TOKEN_BLOCKING_THRESHOLD = 0.1
+
 
 def normalize_title(title: str) -> str:
     """标准化标题用于比较
@@ -29,6 +33,29 @@ def normalize_title(title: str) -> str:
     # 移除多余空格
     title = " ".join(title.split())
     return title
+
+
+def token_overlap(str1: str, str2: str) -> float:
+    """计算两个标准化标题的 token 重叠度（Jaccard-like）
+
+    作为 Levenshtein 比较的快速预筛：
+    - 重叠度低于 TOKEN_BLOCKING_THRESHOLD 时，两标题不可能相似
+    - 重叠度高的才进入昂贵的 Levenshtein 计算
+
+    Args:
+        str1: 标准化标题 1
+        str2: 标准化标题 2
+
+    Returns:
+        重叠度分数 (0-1)
+    """
+    set1 = set(str1.split())
+    set2 = set(str2.split())
+    if not set1 or not set2:
+        return 0.0
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+    return intersection / union if union else 0.0
 
 
 def calculate_similarity(str1: str, str2: str) -> float:
@@ -80,11 +107,17 @@ def deduplicate(papers: list[Paper]) -> list[Paper]:
                 continue
             seen_arxiv_ids.add(arxiv_id)
 
-        # 3. 标题相似度去重
+        # 3. 标题相似度去重（Token blocking + Levenshtein 两阶段）
         normalized = normalize_title(paper.title)
         is_duplicate = False
 
         for seen_title in seen_titles:
+            # 阶段 1：快速 token 预筛
+            overlap = token_overlap(normalized, seen_title)
+            if overlap < TOKEN_BLOCKING_THRESHOLD:
+                continue
+
+            # 阶段 2：精确 Levenshtein 比较（仅对通过预筛的标题）
             similarity = calculate_similarity(normalized, seen_title)
             if similarity >= SIMILARITY_THRESHOLD:
                 logger.debug(f"标题相似 ({similarity:.2f}): {paper.title}")

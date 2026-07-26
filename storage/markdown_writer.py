@@ -33,7 +33,8 @@ def write_markdown(
     Returns:
         输出文件路径
     """
-    # 确保输出目录存在
+    # 确保输出目录存在（放到 _output/ 子目录，与其他论文目录分开）
+    output_path = output_path / "_output"
     output_path.mkdir(parents=True, exist_ok=True)
 
     # 生成文件名
@@ -156,6 +157,7 @@ def write_index(output_path: Path) -> Optional[Path]:
     Returns:
         索引文件路径，无文件时返回 None
     """
+    output_path = output_path / "_output"
     output_path.mkdir(parents=True, exist_ok=True)
 
     # 收集所有论文列表文件（排除索引本身）

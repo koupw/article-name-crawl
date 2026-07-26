@@ -62,7 +62,7 @@ def translate_paper_titles(
                 future.result()
                 success += 1
             except Exception as e:
-                logger.debug("翻译失败: %s - %s", paper.title[:50], e)
+                logger.warning("翻译失败: %s - %s", paper.title[:60], e)
 
     logger.info("翻译完成: %d/%d 篇成功", success, len(to_translate))
     return papers

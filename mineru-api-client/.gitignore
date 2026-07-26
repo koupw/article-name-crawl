@@ -1,0 +1,13 @@
+# 真实配置文件（包含敏感 Token）
+config.json
+
+# 输出文件
+*.md
+*.json
+!config.example.json
+!README.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo

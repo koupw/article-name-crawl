@@ -1,0 +1,5 @@
+{
+  "token": "你的MinerU API Token",
+  "model": "vlm",
+  "base_url": "https://mineru.net/api/v4"
+}

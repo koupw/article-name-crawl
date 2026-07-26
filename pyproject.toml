@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "article-crawl"
+version = "1.5.0"
+description = "学术论文多数据源爬取工具，支持去重、筛选、翻译与 Markdown 输出"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "koupw"},
+]
+keywords = ["academic", "crawler", "arxiv", "openalex", "crossref", "papers"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "arxiv>=2.1.0",
+    "semanticscholar>=0.7.0",
+    "scholarly>=1.7.0",
+    "pyyaml>=6.0",
+    "python-Levenshtein>=0.21.0",
+    "rich>=13.0.0",
+    "deep-translator>=1.11.0",
+    "requests>=2.31.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+web = ["streamlit>=1.30.0"]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+article-crawl = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/koupw/article-name-crawl"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["crawlers*", "models*", "utils*", "storage*", "config*", "web*"]

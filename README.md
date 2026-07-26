@@ -4,20 +4,12 @@
 
 ## 功能特性
 
-- **多数据源支持**：arXiv、Semantic Scholar、Google Scholar、OpenAlex、IEEE Xplore
+- **多数据源支持**：arXiv、Semantic Scholar、Google Scholar、OpenAlex、IEEE Xplore、Crossref、CORE
 - **并发爬取**：所有数据源同时爬取，总耗时 ≈ 最慢的单个数据源
-- **多轮关键词搜索**：全部 30+ 关键词分批搜索，覆盖更多方向（OpenAlex / Semantic Scholar / IEEE Xplore）
-- **智能去重**：基于 DOI、arXiv ID、标题相似度的多级去重
-- **质量筛选**：按引用数、年份、DOI、开放获取等条件筛选论文
-- **跨次去重**：记录历史爬取，避免多次运行产生重复论文
-- **标题翻译**：自动将英文论文标题翻译为中文（支持 Google / 百度双引擎），结果持久化缓存到历史记录
-- **并发翻译**：默认 5 线程并行翻译，30 篇论文约 5 秒
-- **指数退避重试**：网络错误自动重试 3 次，避免临时故障导致爬取失败
-- **多领域支持**：一次运行处理所有研究领域，每个领域生成独立文件
-- **输出目录索引**：自动生成 `_index.md` 汇总所有爬取记录
-- **配置初始化**：`--init` 一键生成带注释的默认配置文件
-- **Obsidian 兼容**：输出带 frontmatter 的 Markdown 文件
-- **可扩展架构**：易于添加新的数据源
+- **智能去重**：基于 DOI、arXiv ID、标题相似度的多级去重 + 跨次去重
+- **标题翻译**：自动翻译英文标题为中文（Google / 百度），结果持久化缓存
+- **论文深度分析**：选择论文 → MinerU PDF 解析 → LLM 生成 14 章结构化报告（含评分/执行摘要/图片）
+- **Web 界面**：Streamlit 双页面（爬取 + 分析），双击 vbs 一键启动
 
 ## 安装
 
@@ -94,8 +86,8 @@ streamlit run web/streamlit_app.py
 
 ```yaml
 language: zh
-vault_path: E:/WorkSpace/ClaudeWork/fmcw-article
-papers_dir: 20_Research/Papers
+vault_path: ./
+papers_dir: papers
 
 research_domains:
   FMCW Laser Ranging:
@@ -114,9 +106,11 @@ research_domains:
 excluded_keywords:
   - workshop
 
-semantic_scholar_api_key: ''  # 可选，提高速率限制
-ieee_api_key: ''              # IEEE Xplore API Key (使用 IEEE 数据源时必填)
-openalex_email: ''            # OpenAlex 邮箱 (可选，提高响应速度)
+# API 配置（默认无需任何 Key 即可使用 arxiv + openalex + crossref）
+semantic_scholar_api_key: ''  # 可选
+ieee_api_key: ''              # IEEE Xplore 需要
+openalex_email: ''            # 可选，提高响应速度
+core_api_key: ''              # CORE 需要（免费注册）
 
 # 翻译引擎配置
 translate_backend: google       # 翻译引擎: google | baidu
@@ -174,8 +168,8 @@ python main.py --domain "FMCW Laser Ranging"
 ### 高级选项
 
 ```bash
-# 指定数据源
-python main.py --sources arxiv,openalex
+# 指定数据源（默认已用最优组合 arxiv+openalex+crossref）
+python main.py --sources arxiv,openalex,crossref,core
 
 # 指定最大结果数
 python main.py --max-results 100

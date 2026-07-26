@@ -1,4 +1,7 @@
-"""历史记录管理，用于跨次去重"""
+"""历史记录管理，用于跨次去重（底层已拆分为 history_index + translation_cache）
+
+对外接口保持完全不变，内部自动处理新旧格式兼容。
+"""
 
 import json
 import logging
@@ -7,82 +10,79 @@ from typing import Optional
 from datetime import datetime
 
 from models.paper import Paper
+from storage.history_manager import HistoryManager, LEGACY_FILE
 
 logger = logging.getLogger(__name__)
 
-# 历史记录文件名
-HISTORY_FILE = "crawled_papers.json"
+# 保留旧常量以兼容可能的直接引用
+HISTORY_FILE = LEGACY_FILE
+
+
+def _resolve_path(output_path: Path) -> Path:
+    """将输出路径指向 _output/ 子目录（与 markdown_writer 保持一致）。"""
+    p = output_path / "_output"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def get_history_path(output_path: Path) -> Path:
-    """获取历史记录文件路径
-
-    Args:
-        output_path: 输出目录路径
-
-    Returns:
-        历史记录文件路径
-    """
-    return output_path / HISTORY_FILE
+    """获取历史记录文件路径"""
+    return _resolve_path(output_path) / LEGACY_FILE
 
 
 def load_history(output_path: Path) -> dict[str, dict]:
-    """加载历史记录
+    """加载历史记录（兼容旧格式，自动读取新格式合成 legacy dict）
 
     Args:
         output_path: 输出目录路径
 
     Returns:
-        历史记录字典，key 为论文唯一标识，value 为论文信息
+        历史记录字典（兼容旧格式，含 title_zh）
     """
-    history_path = get_history_path(output_path)
-    if not history_path.exists():
-        return {}
-
-    try:
-        with open(history_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            logger.info(f"加载历史记录: {len(data)} 篇论文")
-            return data
-    except Exception as e:
-        logger.warning(f"加载历史记录失败: {e}")
-        return {}
+    mgr = HistoryManager(_resolve_path(output_path))
+    legacy = mgr.to_legacy_dict()
+    if legacy:
+        logger.info("加载历史记录: %d 篇论文", len(legacy))
+    return legacy
 
 
 def save_history(output_path: Path, history: dict[str, dict]) -> None:
-    """保存历史记录
+    """保存历史记录（将 legacy dict 拆分写入新格式双文件）
 
     Args:
         output_path: 输出目录路径
-        history: 历史记录字典
+        history: 历史记录字典（含 title_zh）
     """
     output_path.mkdir(parents=True, exist_ok=True)
-    history_path = get_history_path(output_path)
+    mgr = HistoryManager(_resolve_path(output_path))
 
-    try:
-        with open(history_path, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        logger.info(f"保存历史记录: {len(history)} 篇论文")
-    except Exception as e:
-        logger.error(f"保存历史记录失败: {e}")
+    # 同步 legacy dict 的内容到 manager
+    for key, entry in history.items():
+        mgr._index[key] = {
+            "title": entry.get("title", ""),
+            "source": entry.get("source", ""),
+            "domain": entry.get("domain", ""),
+            "crawled_at": entry.get("crawled_at", datetime.now().isoformat()),
+            "doi": entry.get("doi"),
+            "arxiv_id": entry.get("arxiv_id"),
+        }
+        title_zh = entry.get("title_zh")
+        if title_zh:
+            mgr._cache[key] = title_zh
+
+    mgr._save()
+    logger.info("保存历史记录: %d 篇论文", len(history))
 
 
 def get_paper_key(paper: Paper) -> str:
     """获取论文的唯一标识
 
     优先级: DOI > arXiv ID > 标题（标准化）
-
-    Args:
-        paper: 论文对象
-
-    Returns:
-        唯一标识字符串
     """
     if paper.doi:
         return f"doi:{paper.doi.lower().strip()}"
     if paper.arxiv_id:
         return f"arxiv:{paper.arxiv_id.strip()}"
-    # 使用标准化标题作为标识
     from utils.dedup import normalize_title
     return f"title:{normalize_title(paper.title)}"
 
@@ -101,10 +101,11 @@ def deduplicate_with_history(
         output_path: 输出目录路径
 
     Returns:
-        (新论文列表, 更新后的历史记录)
+        (新论文列表, 更新后的历史记录 legacy dict)
     """
-    history = load_history(output_path)
+    mgr = HistoryManager(_resolve_path(output_path))
     new_papers = []
+    history = mgr.to_legacy_dict()
 
     for paper in papers:
         key = get_paper_key(paper)
@@ -145,12 +146,11 @@ def update_history_translations(history: dict[str, dict], papers: list[Paper]) -
 
 
 def clear_history(output_path: Path) -> None:
-    """清除历史记录
-
-    Args:
-        output_path: 输出目录路径
-    """
-    history_path = get_history_path(output_path)
-    if history_path.exists():
-        history_path.unlink()
-        logger.info("历史记录已清除")
+    """清除历史记录（同时清理新格式的双文件）"""
+    mgr = HistoryManager(_resolve_path(output_path))
+    mgr.clear()
+    # 同时清理可能存在的旧文件
+    legacy = get_history_path(output_path)
+    if legacy.exists():
+        legacy.unlink()
+        logger.info("旧历史记录文件已清除")

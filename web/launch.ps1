@@ -30,7 +30,7 @@ Write-Host ""
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
 Write-Host ""
 
-# Start streamlit (hidden window)
-Start-Process -FilePath $streamlitExe -ArgumentList "run", "$projectRoot\web\streamlit_app.py" -WindowStyle Hidden
+# Start streamlit (hidden window, 在项目根目录运行)
+Start-Process -FilePath $streamlitExe -ArgumentList "run", "$projectRoot\web\streamlit_app.py" -WorkingDirectory $projectRoot -WindowStyle Hidden
 
 Read-Host "Service started. Press Enter to close this window (service keeps running in background)"

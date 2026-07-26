@@ -1,55 +1,88 @@
-"""配置文件加载器"""
+"""配置文件加载器（Pydantic v2）"""
 
 import os
 from pathlib import Path
 from typing import Optional
 import yaml
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field, field_validator
 
 
-@dataclass
-class ResearchDomain:
+class ResearchDomain(BaseModel):
     """研究领域配置"""
 
     name: str
-    keywords: list[str]
-    arxiv_categories: list[str]
+    keywords: list[str] = Field(default_factory=list)
+    arxiv_categories: list[str] = Field(default_factory=list)
     priority: int = 5
 
+    @field_validator("priority")
+    @classmethod
+    def _check_priority(cls, v: int) -> int:
+        if v < 1 or v > 10:
+            raise ValueError(f"priority 应为 1-10，当前为 {v}")
+        return v
 
-@dataclass
-class FilterConfig:
+
+class FilterConfig(BaseModel):
     """论文筛选配置"""
 
-    min_citations: int = 0  # 最低引用数
-    year_from: Optional[int] = None  # 起始年份
-    year_to: Optional[int] = None  # 结束年份
-    require_doi: bool = False  # 是否必须有 DOI
-    open_access_only: bool = False  # 是否只要开放获取
+    min_citations: int = 0
+    year_from: Optional[int] = None
+    year_to: Optional[int] = None
+    require_doi: bool = False
+    open_access_only: bool = False
+
+    @field_validator("min_citations")
+    @classmethod
+    def _check_min_citations(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("min_citations 不能为负数")
+        return v
+
+    @field_validator("year_to")
+    @classmethod
+    def _check_year_range(cls, v: Optional[int], info) -> Optional[int]:
+        year_from = info.data.get("year_from")
+        if year_from is not None and v is not None and year_from > v:
+            raise ValueError(f"year_from ({year_from}) > year_to ({v})")
+        return v
 
 
-@dataclass
-class AppConfig:
+class AppConfig(BaseModel):
     """应用配置"""
 
     language: str = "zh"
     vault_path: str = ""
-    papers_dir: str = "20_Research/Papers"
-    research_domains: dict[str, ResearchDomain] = field(default_factory=dict)
-    excluded_keywords: list[str] = field(default_factory=list)
+    papers_dir: str = "papers"
+    research_domains: dict[str, ResearchDomain] = Field(default_factory=dict)
+    excluded_keywords: list[str] = Field(default_factory=list)
     semantic_scholar_api_key: str = ""
     ieee_api_key: str = ""
     openalex_email: str = ""
-    core_api_key: str = ""  # CORE API Key (免费注册 https://core.ac.uk/services/apis/)
-    translate_backend: str = "google"  # 翻译引擎: google | baidu
+    core_api_key: str = ""
+    translate_backend: str = "google"
     baidu_translate_app_id: str = ""
     baidu_translate_app_key: str = ""
-    filters: FilterConfig = field(default_factory=FilterConfig)
+    filters: FilterConfig = Field(default_factory=FilterConfig)
+
+    # LLM 深度分析配置
+    llm_api_key: str = ""
+    llm_api_base: str = "https://api.deepseek.com/v1"
+    llm_model: str = "deepseek-chat"
+    llm_timeout: int = 120
+    analysis_dir: str = "papers/analysis"
 
     @property
     def output_path(self) -> Path:
         """输出目录的完整路径"""
         return Path(self.vault_path) / self.papers_dir
+
+    @field_validator("translate_backend")
+    @classmethod
+    def _check_backend(cls, v: str) -> str:
+        if v not in ("google", "baidu"):
+            raise ValueError(f"未知翻译引擎: {v}（可选: google, baidu）")
+        return v
 
 
 def load_config(config_path: str = "research_interests.yaml") -> AppConfig:
@@ -100,7 +133,7 @@ def load_config(config_path: str = "research_interests.yaml") -> AppConfig:
     return AppConfig(
         language=data.get("language", "zh"),
         vault_path=data.get("vault_path", ""),
-        papers_dir=data.get("papers_dir", "20_Research/Papers"),
+        papers_dir=data.get("papers_dir", "papers"),
         research_domains=domains,
         excluded_keywords=data.get("excluded_keywords", []),
         semantic_scholar_api_key=data.get("semantic_scholar_api_key", "")
@@ -117,6 +150,13 @@ def load_config(config_path: str = "research_interests.yaml") -> AppConfig:
         baidu_translate_app_key=data.get("baidu_translate_app_key", "")
         or os.environ.get("BAIDU_TRANSLATE_APP_KEY", ""),
         filters=filters,
+        # LLM 分析配置
+        llm_api_key=data.get("llm_api_key", "")
+        or os.environ.get("LLM_API_KEY", ""),
+        llm_api_base=data.get("llm_api_base", "https://api.deepseek.com/v1"),
+        llm_model=data.get("llm_model", "deepseek-chat"),
+        llm_timeout=data.get("llm_timeout", 120),
+        analysis_dir=data.get("analysis_dir", "papers/analysis"),
     )
 
 
@@ -142,18 +182,8 @@ def validate_config(config: AppConfig) -> list[str]:
             issues.append(f"领域 '{name}': keywords 为空")
         elif len(domain.keywords) < 3:
             issues.append(f"领域 '{name}': 关键词少于 3 个，搜索结果可能较少")
-        if domain.priority < 1 or domain.priority > 10:
-            issues.append(f"领域 '{name}': priority 应为 1-10，当前为 {domain.priority}")
 
-    f = config.filters
-    if f.min_citations < 0:
-        issues.append("filters.min_citations 不能为负数")
-    if f.year_from is not None and f.year_to is not None and f.year_from > f.year_to:
-        issues.append(f"filters.year_from ({f.year_from}) > year_to ({f.year_to})")
-
-    if config.translate_backend not in ("google", "baidu"):
-        issues.append(f"未知翻译引擎: {config.translate_backend}（可选: google, baidu）")
-    elif config.translate_backend == "baidu" and not (
+    if config.translate_backend == "baidu" and not (
         config.baidu_translate_app_id and config.baidu_translate_app_key
     ):
         issues.append(
@@ -162,13 +192,20 @@ def validate_config(config: AppConfig) -> list[str]:
             "BAIDU_TRANSLATE_APP_KEY 提供）"
         )
 
+    # LLM 分析配置验证（仅在用户打算使用分析功能时提示）
+    if not config.llm_api_key:
+        issues.append(
+            "未配置 llm_api_key（也可用环境变量 LLM_API_KEY）。"
+            "论文深度分析功能将不可用。"
+        )
+
     return issues
 
 
 DEFAULT_CONFIG = """# 研究兴趣与论文爬取配置
 language: zh
 vault_path: ./papers
-papers_dir: ''
+papers_dir: papers
 research_domains:
   Example Domain:
     keywords:
@@ -183,6 +220,8 @@ excluded_keywords:
   - workshop
 
 # API 配置（可选，也可用同名大写环境变量替代）
+# 默认数据源（无需 Key）：arxiv + openalex + crossref
+# 如需更多数据源，在命令行用 --sources 指定
 semantic_scholar_api_key: ''
 ieee_api_key: ''
 openalex_email: ''
@@ -192,6 +231,20 @@ core_api_key: ''                 # CORE API Key（免费注册 https://core.ac.u
 translate_backend: google        # 翻译引擎: google | baidu
 baidu_translate_app_id: ''       # 百度翻译 APP ID（使用 baidu 时必填，或用环境变量 BAIDU_TRANSLATE_APP_ID）
 baidu_translate_app_key: ''      # 百度翻译 Secret Key（或用环境变量 BAIDU_TRANSLATE_APP_KEY）
+
+# LLM 深度分析配置（可选，论文解读功能需要）
+# API Key 优先级：命令行 --api-key > 环境变量 LLM_API_KEY > 配置文件 llm_api_key
+#
+# 支持任何 OpenAI 兼容格式端点，例如：
+#   - DeepSeek:  https://api.deepseek.com/v1           (模型: deepseek-chat)
+#   - OpenAI:    https://api.openai.com/v1              (模型: gpt-4o)
+#   - OpenCode:  https://opencode.ai/zen/go/v1/         (模型: 按该网关实际部署填写)
+#   - 本地/Ollama: http://localhost:11434/v1             (模型: llama3 等)
+llm_api_key: ''                      # 对应网关的 API Key
+llm_api_base: 'https://api.deepseek.com/v1'   # API Base URL（OpenAI 兼容格式）
+llm_model: 'deepseek-chat'           # 模型名称
+llm_timeout: 120                     # LLM 请求超时秒数
+analysis_dir: 'papers/analysis'      # 深度分析报告存放目录
 
 # 质量筛选配置
 filters:
