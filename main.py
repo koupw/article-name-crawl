@@ -459,7 +459,12 @@ def main():
 
     # 解析数据源
     if args.sources:
-        sources = [s.strip() for s in args.sources.split(",")]
+        raw_sources = [s.strip() for s in args.sources.split(",")]
+        # "all" 特殊处理：等价于 AVAILABLE_SOURCES 全选
+        if "all" in raw_sources:
+            sources = list(AVAILABLE_SOURCES)
+        else:
+            sources = raw_sources
         # 验证数据源
         for source in sources:
             if source not in AVAILABLE_SOURCES:
@@ -472,7 +477,7 @@ def main():
 
     console.print(f"数据源: {', '.join(sources)}")
     console.print(f"最大结果数: {args.max_results} / 数据源")
-    if set(sources) == {"arxiv", "openalex", "crossref"}:
+    if not args.sources:
         console.print("[dim]使用默认最优组合。如需全部数据源，加 --sources all[/dim]")
 
     # 初始化爬虫（在所有领域间共享）

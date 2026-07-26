@@ -47,6 +47,7 @@ def check_cache(
     source_path: Optional[Path] = None,
     md_text: Optional[str] = None,
     analysis_dir: Path = Path("papers/analysis"),
+    tag: str = "",
 ) -> Optional[Path]:
     """
     检查是否已有缓存分析结果。
@@ -55,6 +56,7 @@ def check_cache(
         source_path: 原始文件路径（PDF 或 Markdown）。
         md_text: 原始 Markdown 文本（与 source_path 二选一）。
         analysis_dir: 分析输出根目录。
+        tag: 附加标识串（如模型名），用于区分同一输入的不同处理参数。
 
     Returns:
         若命中缓存，返回缓存的论文分析目录 Path；否则返回 None。
@@ -65,6 +67,10 @@ def check_cache(
         h = _text_hash(md_text)
     else:
         return None
+
+    # 拼入 tag，区分不同模型/参数下的同一输入
+    if tag:
+        h = _text_hash(h + ":" + tag)
 
     cache_root = get_cache_dir(analysis_dir)
     cache_entry = cache_root / h[:2] / h
@@ -85,6 +91,7 @@ def save_cache(
     source_path: Optional[Path] = None,
     md_text: Optional[str] = None,
     analysis_dir: Path = Path("papers/analysis"),
+    tag: str = "",
 ) -> None:
     """
     将分析结果目录保存到缓存。
@@ -94,6 +101,7 @@ def save_cache(
         source_path: 原始文件路径。
         md_text: 原始 Markdown 文本。
         analysis_dir: 分析输出根目录。
+        tag: 附加标识串（如模型名），与 check_cache 一致。
     """
     if source_path:
         h = _file_hash(source_path)
@@ -101,6 +109,9 @@ def save_cache(
         h = _text_hash(md_text)
     else:
         return
+
+    if tag:
+        h = _text_hash(h + ":" + tag)
 
     cache_root = get_cache_dir(analysis_dir)
     cache_entry = cache_root / h[:2] / h

@@ -51,10 +51,16 @@ def _make_slug(metadata: dict) -> str:
     如: Rashid_2026_multi_band_fmcw
     """
     parts = []
-    # 第一作者姓氏
+    # 第一作者姓氏（兼容 "Smith, J." / "J. Smith" / "Smith J" 三种格式）
     author = metadata.get("first_author", "")
     if author:
-        parts.append(author.split()[-1].strip(","))
+        if "," in author:
+            # "Smith, J." → 取逗号前半段为姓氏
+            surname = author.split(",")[0].strip()
+        else:
+            # "J. Smith" → 取最后一个 token 为姓氏
+            surname = author.split()[-1]
+        parts.append(surname.strip(",. "))
     # 年份
     year = metadata.get("year", "")
     if year:
@@ -89,9 +95,24 @@ def _resolve_api_key(args_key: Optional[str], config: AppConfig) -> str:
 
 
 def _resolve_analysis_dir(args_output: Optional[str], config: AppConfig) -> Path:
-    """确定输出根目录（papers/）。"""
+    """确定分析输出根目录。
+
+    优先级：
+    1. --output 命令行参数（绝对或相对路径）
+    2. config.analysis_dir（配置文件字段，如 'papers/analysis'）
+    3. config.vault_path / config.papers_dir
+    """
     if args_output:
         return Path(args_output).resolve()
+    # 配置文件中的 analysis_dir 字段（吸纳设计意图，便于与爬取产物隔离）
+    if config.analysis_dir:
+        p = Path(config.analysis_dir)
+        if p.is_absolute():
+            return p.resolve()
+        # 相对路径：挂在 vault_path 下，否则相对当前工作目录
+        if config.vault_path:
+            return (Path(config.vault_path) / p).resolve()
+        return p.resolve()
     if config.vault_path:
         return Path(config.vault_path).resolve() / config.papers_dir
     return Path(config.papers_dir).resolve()
@@ -202,6 +223,10 @@ def run_analysis_pipeline(
         raise ValueError(f"未知模式: {mode}")
 
     # ========== 阶段 2：确定输出目录 slug ==========
+    # 缓存标签（区分不同模型/参数下的同一输入）
+    _mineru_model = "vlm"  # MinerU 解析模型
+    _cache_tag = f"mineru:{_mineru_model}|llm:{model}"
+
     # 优先用 arXiv ID，其次用 DOI，最后用论文元数据生成
     if paper_metadata.get("arxiv_id"):
         slug = f"arxiv_{paper_metadata['arxiv_id']}"
@@ -224,10 +249,10 @@ def run_analysis_pipeline(
     if not force and not skip_analysis:
         cache_hit = None
         if pdf_path:
-            cache_hit = check_cache(source_path=pdf_path, analysis_dir=analysis_dir)
+            cache_hit = check_cache(source_path=pdf_path, analysis_dir=analysis_dir, tag=_cache_tag)
         elif md_path:
             md_text = md_path.read_text(encoding="utf-8")
-            cache_hit = check_cache(md_text=md_text, analysis_dir=analysis_dir)
+            cache_hit = check_cache(md_text=md_text, analysis_dir=analysis_dir, tag=_cache_tag)
 
         if cache_hit:
             _notify("检测到缓存结果，直接恢复...")
@@ -327,9 +352,9 @@ def run_analysis_pipeline(
 
     # 保存缓存
     if pdf_path:
-        save_cache(result_dir=target_dir, source_path=pdf_path, analysis_dir=analysis_dir)
+        save_cache(result_dir=target_dir, source_path=pdf_path, analysis_dir=analysis_dir, tag=_cache_tag)
     else:
-        save_cache(result_dir=target_dir, md_text=md_text, analysis_dir=analysis_dir)
+        save_cache(result_dir=target_dir, md_text=md_text, analysis_dir=analysis_dir, tag=_cache_tag)
 
     _notify(f"分析完成！报告位置: {target_dir / 'analysis.md'}")
     _notify(f"执行摘要:\n{analysis_result.get('exec_summary', '')[:300]}...")

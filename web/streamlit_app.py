@@ -6,6 +6,8 @@
 然后在浏览器中打开显示的地址（默认 http://localhost:8501）
 """
 
+import copy
+import re
 import sys
 from pathlib import Path
 
@@ -43,6 +45,12 @@ setup_logger(replace_handlers=False)
 # 配置加载（使用项目根目录的绝对路径，避免工作目录问题）
 # ---------------------------------------------------------------------------
 CONFIG_PATH = PROJECT_ROOT / "research_interests.yaml"
+
+def _safe_basename(s: str, maxlen: int = 80) -> str:
+    """去除文件系统非法字符，避免 download_button 失败。"""
+    s = re.sub(r'[\\/:*?"<>|]+', "_", s)
+    s = re.sub(r"\s+", "_", s)
+    return s.strip("._")[:maxlen]
 
 @st.cache_data
 def load_app_config(config_path: str = str(CONFIG_PATH)) -> AppConfig:
@@ -176,10 +184,13 @@ if not selected_sources:
 # 运行爬取（仅在用户点击按钮时执行）
 # ---------------------------------------------------------------------------
 if run_clicked:
-    # 临时覆盖配置（仅影响本次运行）
-    config.filters.min_citations = min_citations
-    config.filters.year_from = year_from
-    config.translate_backend = translate_engine
+    # 独立副本写入运行时覆盖（不污染 @st.cache_data 缓存的 config）
+    run_cfg = copy.deepcopy(config)
+    run_cfg.filters.min_citations = min_citations
+    run_cfg.filters.year_from = year_from
+    run_cfg.translate_backend = translate_engine
+    # 重新取 domain_config 以避免引用缓存对象
+    domain_config = run_cfg.research_domains[selected_domain]
 
     run_options = RunOptions(
         max_results=max_results,
@@ -188,7 +199,7 @@ if run_clicked:
         no_translate=no_translate,
     )
 
-    output_path = config.output_path
+    output_path = run_cfg.output_path
 
     # 实时日志区域
     log_container = st.empty()
@@ -200,12 +211,12 @@ if run_clicked:
         log_container.markdown(f"```text\n{display}\n```")
 
     # 新建爬虫（每个请求独立实例，避免线程安全问题）
-    crawlers = get_crawlers(sources=selected_sources, config=config)
+    crawlers = get_crawlers(sources=selected_sources, config=run_cfg)
 
     with st.status("正在爬取论文...", expanded=True) as status:
         file_path, papers = process_domain(
             domain_config=domain_config,
-            config=config,
+            config=run_cfg,
             run_options=run_options,
             crawlers=crawlers,
             output_path=output_path,
@@ -427,7 +438,6 @@ if papers:
                         "practical": "实用",
                         "writing": "写作",
                         "influence": "影响",
-                        "technical": "技术",
                     }
                     for col, (k, v) in zip(ccols, list(scores.items())[:6]):
                         label = score_map.get(k, k)
@@ -448,7 +458,7 @@ if papers:
                     dcols[0].download_button(
                         "analysis.md",
                         data=f.read(),
-                        file_name=f"{selected_paper.title[:50]}_analysis.md",
+                        file_name=f"{_safe_basename(selected_paper.title[:50])}_analysis.md",
                         mime="text/markdown",
                         use_container_width=True,
                         key="dl_ana",
@@ -458,7 +468,7 @@ if papers:
                     dcols[1].download_button(
                         "full.md (原始解析)",
                         data=f.read(),
-                        file_name=f"{selected_paper.title[:50]}_full.md",
+                        file_name=f"{_safe_basename(selected_paper.title[:50])}_full.md",
                         mime="text/markdown",
                         use_container_width=True,
                         key="dl_full",

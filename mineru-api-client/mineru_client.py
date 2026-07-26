@@ -50,16 +50,16 @@ def _resolve_token(cmdline_token: str) -> str:
     """
     Token 优先级：
     1. 命令行 --token
-    2. 同级目录 config.json 中的 "token" 字段
-    3. MINERU_TOKEN 环境变量
+    2. MINERU_TOKEN 环境变量
+    3. 同级目录 config.json 中的 "token" 字段（历史兼容）
     """
     if cmdline_token:
         return cmdline_token
+    env_token = os.getenv("MINERU_TOKEN", "")
+    if env_token:
+        return env_token
     cfg = _load_config()
-    token = cfg.get("token", "")
-    if token:
-        return token
-    return os.getenv("MINERU_TOKEN", "")
+    return cfg.get("token", "")
 
 
 def _headers(token: str) -> dict:

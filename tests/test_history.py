@@ -166,11 +166,13 @@ def test_update_translations_skip_none():
 def test_clear_history(temp_output):
     """清除历史应删除新格式的双文件"""
     save_history(temp_output, {"test": {"title": "Test"}})
-    # 新格式写入 history_index.json + translation_cache.json
-    assert (temp_output / "history_index.json").exists()
+    # 新格式写入 _output/history_index.json + _output/translation_cache.json
+    idx_path = temp_output / "_output" / "history_index.json"
+    cache_path = temp_output / "_output" / "translation_cache.json"
+    assert idx_path.exists()
     clear_history(temp_output)
-    assert not (temp_output / "history_index.json").exists()
-    assert not (temp_output / "translation_cache.json").exists()
+    assert not idx_path.exists()
+    assert not cache_path.exists()
 
 
 def test_clear_nonexistent_history(temp_output):

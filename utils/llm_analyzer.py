@@ -314,10 +314,10 @@ _FULL_ANALYSIS_PROMPT_ZH = """请基于以下论文全文，生成完整的深�
 | 评分维度 | 分数 | 评分理由 |
 |----------|------|----------|
 | 创新性 | X.X/10 | [具体理由，不少于 15 字] |
-| 技术质量 | X.X/10 | [具体理由，不少于 15 字] |
 | 实验充分性 | X.X/10 | [具体理由，不少于 15 字] |
-| 写作质量 | X.X/10 | [具体理由，不少于 15 字] |
 | 实用性 | X.X/10 | [具体理由，不少于 15 字] |
+| 写作质量 | X.X/10 | [具体理由，不少于 15 字] |
+| 影响力 | X.X/10 | [具体理由，不少于 15 字] |
 
 ## 重点关注
 ### 值得关注的技术点
@@ -400,7 +400,14 @@ The report must strictly contain the following 14 chapters with bilingual header
 # Future Work
 # Assessment
 
-[Scoring table with dimensions: Innovation, Technical Quality, Experiment Thoroughness, Writing Quality, Practicality]
+### Dimension Scores (must use this exact table format, do not omit!)
+| Dimension | Score | Justification |
+|-----------|-------|---------------|
+| Innovation | X.X/10 | [specific reason, at least 15 words] |
+| Experiment Thoroughness | X.X/10 | [specific reason, at least 15 words] |
+| Practicality | X.X/10 | [specific reason, at least 15 words] |
+| Writing Quality | X.X/10 | [specific reason, at least 15 words] |
+| Influence | X.X/10 | [specific reason, at least 15 words] |
 
 Paper text:
 {paper_text}
@@ -698,11 +705,10 @@ class LLMAnalyzer:
         # 匹配模式：维度名 + 分隔符 + 数字/10
         pattern_map = [
             (r"创新(?:性|程度)?", "innovation"),
-            (r"技术(?:质量|水平)?", "technical"),
             (r"实验(?:充分性|评估|设计)?", "experiment"),
             (r"写作(?:质量|表达)?", "writing"),
             (r"实用(?:性|价值)?", "practical"),
-            (r"(?:领域|行业)?影响", "influence"),
+            (r"(?:领域|行业)?影响力?", "influence"),
             (r"(?:Overall|总体)(?:\s*Score|\s*评分)?", "overall"),
         ]
         scores: dict[str, float] = {}
@@ -717,9 +723,6 @@ class LLMAnalyzer:
         if "overall" not in scores and all(k in scores for k in sub_keys):
             overall = sum(scores[k] * self.weights.get(k, 0.2) for k in sub_keys)
             scores["overall"] = round(overall, 1)
-        # 若缺少 technical，用 experiment 代理
-        if "technical" not in scores and "experiment" in scores:
-            scores["technical"] = scores["experiment"]
         return scores
 
     def _extract_exec_summary(self, report: str) -> str:

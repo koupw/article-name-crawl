@@ -83,6 +83,8 @@ def write_markdown(
         "google_scholar": "Google Scholar",
         "openalex": "OpenAlex",
         "ieee_xplore": "IEEE Xplore",
+        "crossref": "Crossref",
+        "core": "CORE",
     }
 
     # 按数据源输出

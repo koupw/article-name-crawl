@@ -94,6 +94,7 @@ def test_validate_valid_config():
             ),
         },
         filters=FilterConfig(min_citations=3, year_from=2020, year_to=2024),
+        llm_api_key="dummy",  # 抑制 LLM 未配置的警告
     )
     warnings = validate_config(config)
     assert len(warnings) == 0
