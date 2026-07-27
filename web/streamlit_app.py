@@ -25,7 +25,6 @@ from utils.logger import setup_logger
 
 # 论文深度分析相关（需要在主页面内直接嵌入分析功能）
 from analyze import run_analysis_pipeline, _resolve_api_key, _resolve_analysis_dir
-from config.loader import load_config as _load_cfg_raw  # noqa: E402
 from storage.report_writer import md_with_inline_images
 
 # ---------------------------------------------------------------------------

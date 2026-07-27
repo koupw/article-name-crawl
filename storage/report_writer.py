@@ -111,7 +111,7 @@ def _copy_images(src_dir: Path, dst_dir: Path) -> None:
             shutil.copy2(src, dst_dir / src.name)
 
 
-def _normalize_image_refs(text: str, vault_prefix: str = "images/") -> str:
+def _normalize_image_refs(text: str) -> str:
     """统一图片引用为 note-relative 标准 markdown（Obsidian 可靠格式）。
 
     - ![](images/figure-1.jpg) → 保持原样
@@ -142,8 +142,8 @@ def _normalize_image_refs(text: str, vault_prefix: str = "images/") -> str:
     )
     # 4. 清理旧残留：![Figure figure-1] → ![Figure 1]
     text = re.sub(
-        r"!\[Figure figure-([\d-]+[a-z]?)\]\((?:[^)]*?/)?images/figure-[^)]+\)",
-        r"![Figure \1](images/figure-\1.jpg)",
+        r"!\[Figure figure-([\d-]+[a-z]?)\.(\w+)\]\((?:[^)]*?/)?images/figure-[^)]+\)",
+        r"![Figure \1](images/figure-\1.\2)",
         text,
         flags=re.IGNORECASE,
     )
@@ -153,7 +153,7 @@ def _normalize_image_refs(text: str, vault_prefix: str = "images/") -> str:
     return text
 
 
-def _inject_figures(report_md: str, img_dir: Path, vault_prefix: str = "images/") -> str:
+def _inject_figures(report_md: str, img_dir: Path) -> str:
     """将 images/ 目录中的图片注入到分析报告中。
 
     策略：
@@ -161,8 +161,6 @@ def _inject_figures(report_md: str, img_dir: Path, vault_prefix: str = "images/"
     2. 扫描报告中的图号提及（Fig. N / Figure N / 图N），
        在首次提及的段落后插入对应图片
     3. 未被提及的图片追加到"论文图表"附录
-
-    vault_prefix: 从 vault root 到 images/ 的相对路径（如 papers/analysis/arxiv_2607.15109v1/images/）
     """
     if not img_dir.exists():
         return report_md
