@@ -214,14 +214,21 @@ python main.py --sources arxiv,openalex,semantic_scholar --max-results 100 --yea
 
 ## 输出文件位置
 
-默认输出到配置文件中的 `vault_path/papers_dir`：
+爬取结果输出到 `papers/_output/`，深度分析结果输出到 `papers/analysis/{slug}/`：
 
 ```
-E:/WorkSpace/ClaudeWork/article-name-crawl/papers/_output/
-├── _index.md                          # 📚 索引（汇总所有列表文件）
-├── FMCW_Laser_Ranging_20260629.md     # 论文列表（每次爬取生成一个文件）
-├── FMCW_Laser_Ranging_20260604.md     # 历史爬取记录
-└── history_index.json + translation_cache.json                # 历史记录（跨次去重 + 翻译缓存）
+papers/
+├── _output/                                # 爬取结果
+│   ├── _index.md                           # 索引（汇总所有列表文件）
+│   ├── FMCW_Laser_Ranging_20260629.md      # 论文列表
+│   ├── history_index.json                  # 历史索引（跨次去重）
+│   └── translation_cache.json              # 翻译缓存（持久化）
+└── analysis/                               # 深度分析报告
+    └── {slug}/                             # 每篇论文独立目录
+        ├── analysis.md                     # 结构化分析报告（含图片引用）
+        ├── full.md                         # 原始论文全文 Markdown
+        ├── meta.json                       # 元数据/评分/摘要
+        └── images/                         # 论文图片
 ```
 
 ## 标题翻译
@@ -272,6 +279,54 @@ python main.py --init
 | 生成默认配置 | `python main.py --init` |
 | 清除重爬 | `python main.py --clear-history` |
 | 不翻译 | `python main.py --sources openalex --no-translate` |
+
+## 论文深度分析
+
+对单篇论文进行 LLM 驱动的结构化深度分析（MinerU PDF 解析 → LLM 14 章报告）：
+
+```bash
+# 分析本地 PDF
+python analyze.py pdf "papers/download/report.pdf"
+
+# 通过 arXiv ID 下载并分析
+python analyze.py arxiv 2401.12345
+
+# 通过 DOI 下载并分析
+python analyze.py doi 10.1000/xyz
+
+# 分析已有 Markdown（跳过 MinerU 解析，省时间）
+python analyze.py from-md "papers/parsed/report/report.md"
+
+# 指定 LLM 参数
+python analyze.py pdf report.pdf --api-key sk-xxx --model deepseek-chat --language zh
+
+# 仅做 PDF 解析，跳过 LLM 分析（省费用）
+python analyze.py pdf report.pdf --skip-analysis
+
+# 强制重新分析（忽略缓存）
+python analyze.py pdf report.pdf --force
+
+# 指定输出目录
+python analyze.py pdf report.pdf --output ./my_analysis
+```
+
+### LLM 配置
+
+在 `research_interests.yaml` 中配置：
+
+```yaml
+llm_api_key: ''                          # 或用环境变量 LLM_API_KEY
+llm_api_base: 'https://api.deepseek.com/v1'  # 任何 OpenAI 兼容端点
+llm_model: 'deepseek-chat'
+llm_timeout: 300                         # 推理模型需较长超时
+analysis_dir: 'papers/analysis'          # 报告输出目录
+```
+
+API Key 优先级：命令行 `--api-key` > 环境变量 `LLM_API_KEY` > 配置文件 `llm_api_key`
+
+### 分析缓存
+
+对同一篇论文的相同 LLM 模型，分析结果自动缓存到 `papers/analysis/_cache/`，避免重复调用 LLM 产生费用。使用 `--force` 可跳过缓存。
 
 ## 数据源选择
 
@@ -423,11 +478,12 @@ article-name-crawl/
 ├── README.md                  # 项目说明
 ├── USAGE.md                   # 使用指南（本文件）
 ├── requirements.txt           # Python 依赖
-├── main.py                    # CLI 入口
+├── main.py                    # CLI 入口（爬取）
+├── analyze.py                 # CLI 入口（论文深度分析）
 ├── config/                    # 配置模块
 │   ├── __init__.py
 │   └── loader.py              # 配置加载 + 验证
-├── crawlers/                  # 爬虫模块
+├── crawlers/                  # 爬虫模块（7 个数据源）
 │   ├── __init__.py
 │   ├── base.py                # 爬虫基类（含重试机制 + 多轮搜索模板）
 │   ├── arxiv_crawler.py       # arXiv 爬虫
@@ -442,22 +498,43 @@ article-name-crawl/
 │   └── paper.py               # 论文数据模型
 ├── storage/
 │   ├── __init__.py
-│   └── markdown_writer.py     # Markdown 输出 + 索引生成
-├── tests/                     # 单元测试（108 个测试用例）
+│   ├── markdown_writer.py     # Markdown 输出 + 索引生成
+│   ├── history_manager.py     # 历史记录管理（索引 + 翻译缓存）
+│   └── report_writer.py       # 分析报告写入（含图片注入）
+├── tests/                     # 单元测试
 │   ├── conftest.py            # 测试夹具与工厂函数
 │   ├── test_config.py         # 配置验证测试
-│   ├── test_crawlers.py       # 爬虫实例化/解析/分批模板/重试测试
+│   ├── test_crawlers.py       # 爬虫测试
 │   ├── test_dedup.py          # 去重逻辑测试
 │   ├── test_filter.py         # 质量筛选测试
 │   ├── test_history.py        # 历史记录测试
-│   └── test_paper_model.py    # 数据模型测试
-└── utils/
-    ├── __init__.py
-    ├── dedup.py               # 去重逻辑
-    ├── filter.py              # 质量筛选
-    ├── history.py             # 历史记录管理（跨次去重 + 翻译缓存）
-    ├── logger.py              # 日志配置
-    ├── paper_translator.py    # 并发翻译
-    ├── retry.py               # 统一重试机制（指数退避）
-    └── translator.py          # 翻译引擎（Google Translate）
+│   ├── test_llm_analyzer.py   # LLM 分析引擎测试
+│   ├── test_paper_model.py    # 数据模型测试
+│   ├── test_report_writer.py  # 报告写入测试
+│   ├── test_analyze_utils.py  # 分析工具函数测试
+│   └── test_main_web.py       # Web/主流程集成测试
+├── utils/
+│   ├── __init__.py
+│   ├── llm_analyzer.py        # LLM 深度分析引擎（Map-Reduce + 评分）
+│   ├── cache_manager.py       # 分析缓存管理（避免重复调用 LLM）
+│   ├── mineru_parser.py       # MinerU PDF 解析封装
+│   ├── pdf_downloader.py      # arXiv/DOI/URL PDF 下载
+│   ├── dedup.py               # 去重逻辑
+│   ├── filter.py              # 质量筛选
+│   ├── history.py             # 历史记录 CLI 接口
+│   ├── logger.py              # 日志配置
+│   ├── paper_translator.py    # 并发翻译
+│   ├── retry.py               # 统一重试机制（指数退避）
+│   └── translator.py          # 翻译引擎（Google Translate）
+├── web/                       # Streamlit Web 界面
+│   ├── streamlit_app.py       # 主页面（爬取 + 分析）
+│   ├── pages/analysis.py      # 子页面（深度分析）
+│   ├── launch.py              # Web 启动器
+│   ├── launch.vbs             # Windows 一键启动
+│   ├── launch.ps1             # PowerShell 启动脚本
+│   ├── stop.vbs               # Windows 停止脚本
+│   └── stop.ps1               # PowerShell 停止脚本
+└── papers/                    # 输出目录（git 忽略）
+    ├── _output/               # 爬取结果
+    └── analysis/              # 深度分析报告
 ```

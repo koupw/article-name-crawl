@@ -112,6 +112,13 @@ ieee_api_key: ''              # IEEE Xplore 需要
 openalex_email: ''            # 可选，提高响应速度
 core_api_key: ''              # CORE 需要（免费注册）
 
+# LLM 深度分析配置（可选，论文解读功能需要）
+llm_api_key: ''               # 对应 API 网关的 Key（或用环境变量 LLM_API_KEY）
+llm_api_base: 'https://api.deepseek.com/v1'  # 任何 OpenAI 兼容端点
+llm_model: 'deepseek-chat'    # 模型名称
+llm_timeout: 120              # LLM 请求超时秒数
+analysis_dir: 'papers/analysis'  # 深度分析报告存放目录
+
 # 翻译引擎配置
 translate_backend: google       # 翻译引擎: google | baidu
 baidu_translate_app_id: ''      # 百度翻译 APP ID (使用 baidu 时必填)
@@ -217,7 +224,7 @@ python main.py --domain all
 |------|------|--------|
 | `--config` | 配置文件路径 | `research_interests.yaml` |
 | `--domain` | 研究领域名称。支持逗号分隔（`"A,B"`）或 `all`（全部领域） | 全部领域（按 priority 排序） |
-| `--sources` | 数据源，逗号分隔 | `arxiv,semantic_scholar,google_scholar,openalex,ieee_xplore` |
+| `--sources` | 数据源，逗号分隔 | `arxiv,openalex,crossref` |
 | `--max-results` | 每个数据源最大结果数 | `50` |
 | `--output` | 输出目录 | 配置文件中的 `vault_path/papers_dir` |
 | `--verbose` | 详细日志 | `False` |
@@ -330,8 +337,10 @@ sources:
 article-name-crawl/
 ├── research_interests.yaml    # 配置文件
 ├── README.md                  # 项目说明
+├── USAGE.md                   # 使用指南
 ├── requirements.txt           # Python 依赖
-├── main.py                    # CLI 入口
+├── main.py                    # CLI 入口（爬取）
+├── analyze.py                 # CLI 入口（论文深度分析）
 ├── config/
 │   ├── __init__.py
 │   └── loader.py              # 配置加载 + 验证
@@ -350,24 +359,50 @@ article-name-crawl/
 │   └── paper.py               # 论文数据模型
 ├── storage/
 │   ├── __init__.py
-│   └── markdown_writer.py     # Markdown 输出 + 索引生成
-├── tests/                     # 单元测试（94 个测试用例）
-│   ├── conftest.py
-│   ├── test_config.py
-│   ├── test_crawlers.py       # 爬虫实例化/解析/分批模板/重试
-│   ├── test_dedup.py
-│   ├── test_filter.py
-│   ├── test_history.py
-│   └── test_paper_model.py
-└── utils/
-    ├── __init__.py
-    ├── dedup.py               # 去重逻辑
-    ├── filter.py              # 质量筛选
-    ├── history.py             # 历史记录管理（跨次去重 + 翻译缓存）
-    ├── logger.py              # 日志配置
-    ├── paper_translator.py    # 并发翻译
-    ├── retry.py               # 统一重试机制（指数退避）
-    └── translator.py          # 翻译引擎（Google Translate）
+│   ├── markdown_writer.py     # Markdown 输出 + 索引生成
+│   ├── history_manager.py     # 历史记录管理（索引 + 翻译缓存）
+│   └── report_writer.py       # 分析报告写入（含图片注入）
+├── tests/                     # 单元测试
+│   ├── conftest.py            # 测试夹具与工厂函数
+│   ├── test_config.py         # 配置验证测试
+│   ├── test_crawlers.py       # 爬虫测试
+│   ├── test_dedup.py          # 去重逻辑测试
+│   ├── test_filter.py         # 质量筛选测试
+│   ├── test_history.py        # 历史记录测试
+│   ├── test_llm_analyzer.py   # LLM 分析引擎测试
+│   ├── test_paper_model.py    # 数据模型测试
+│   ├── test_report_writer.py  # 报告写入测试
+│   ├── test_analyze_utils.py  # 分析工具函数测试
+│   └── test_main_web.py       # Web/主流程集成测试
+├── utils/
+│   ├── __init__.py
+│   ├── llm_analyzer.py        # LLM 深度分析引擎（Map-Reduce + 评分）
+│   ├── cache_manager.py       # 分析缓存管理（避免重复调用 LLM）
+│   ├── mineru_parser.py       # MinerU PDF 解析封装
+│   ├── pdf_downloader.py      # arXiv/DOI/URL PDF 下载
+│   ├── dedup.py               # 去重逻辑
+│   ├── filter.py              # 质量筛选
+│   ├── history.py             # 历史记录 CLI 接口
+│   ├── logger.py              # 日志配置
+│   ├── paper_translator.py    # 并发翻译
+│   ├── retry.py               # 统一重试机制（指数退避）
+│   └── translator.py          # 翻译引擎（Google Translate）
+├── web/
+│   ├── streamlit_app.py       # Streamlit 主页面（爬取 + 分析）
+│   ├── pages/analysis.py      # Streamlit 子页面（深度分析）
+│   ├── launch.py              # Web 启动器
+│   ├── launch.vbs             # Windows 一键启动
+│   ├── launch.ps1             # PowerShell 启动脚本
+│   ├── stop.vbs               # Windows 停止脚本
+│   └── stop.ps1               # PowerShell 停止脚本
+└── papers/                    # 输出目录（git 忽略）
+    ├── _output/               # 爬取结果 Markdown + 历史记录
+    └── analysis/              # 深度分析报告
+        └── {slug}/            # 每篇论文独立目录
+            ├── analysis.md    # 结构化分析报告（含图片）
+            ├── full.md        # 原始论文全文 Markdown
+            ├── meta.json      # 元数据/评分
+            └── images/        # 论文图片
 ```
 
 ## 常见问题
