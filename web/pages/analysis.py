@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from config.loader import load_config, AppConfig
 from utils.logger import setup_logger
 from analyze import run_analysis_pipeline, _resolve_api_key, _resolve_analysis_dir
+from storage.report_writer import md_with_inline_images
 
 setup_logger(replace_handlers=False)
 
@@ -142,17 +143,10 @@ if run_clicked:
         st.error(str(e))
         st.stop()
 
-    # 实时进度区域
-    log_container = st.empty()
-    logs: list[str] = []
-
-    def progress_callback(msg: str) -> None:
-        logs.append(msg)
-        # 保留最近 20 条
-        display = "\n".join(f"• {m}" for m in logs[-20:])
-        log_container.markdown(f"```text\n{display}\n```")
-
     with st.status("正在执行分析流程...", expanded=True) as status:
+        def progress_callback(msg: str) -> None:
+            status.write(f"• {msg}")
+
         try:
             target_dir = run_analysis_pipeline(
                 mode=run_mode,
@@ -243,14 +237,20 @@ if run_clicked:
             use_container_width=True,
         )
 
-    # 完整报告预览（折叠）
+    # 完整报告预览（折叠，图片 base64 内联以支持 Streamlit 显示）
     if analysis_md_path.exists():
         with st.expander("📝 查看完整报告 (analysis.md)", expanded=False):
-            st.markdown(analysis_md_path.read_text(encoding="utf-8"))
+            st.markdown(md_with_inline_images(
+                analysis_md_path.read_text(encoding="utf-8"),
+                analysis_md_path.parent,
+            ), unsafe_allow_html=True)
 
     # 原始 Markdown 预览（折叠）
     if full_md_path.exists():
         with st.expander("📄 查看原始解析 (full.md)", expanded=False):
-            st.markdown(full_md_path.read_text(encoding="utf-8"))
+            st.markdown(md_with_inline_images(
+                full_md_path.read_text(encoding="utf-8"),
+                full_md_path.parent,
+            ), unsafe_allow_html=True)
 
     st.success(f"分析结果目录: {target_dir}")

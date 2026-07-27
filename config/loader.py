@@ -6,6 +6,12 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+# 自动加载项目根目录的 .env 文件（如果存在）
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+if _ENV_PATH.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_ENV_PATH)
+
 
 class ResearchDomain(BaseModel):
     """研究领域配置"""
@@ -204,7 +210,7 @@ def validate_config(config: AppConfig) -> list[str]:
 
 DEFAULT_CONFIG = """# 研究兴趣与论文爬取配置
 language: zh
-vault_path: ./papers
+vault_path: .
 papers_dir: papers
 research_domains:
   Example Domain:

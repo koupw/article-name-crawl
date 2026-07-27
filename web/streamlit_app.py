@@ -26,6 +26,7 @@ from utils.logger import setup_logger
 # 论文深度分析相关（需要在主页面内直接嵌入分析功能）
 from analyze import run_analysis_pipeline, _resolve_api_key, _resolve_analysis_dir
 from config.loader import load_config as _load_cfg_raw  # noqa: E402
+from storage.report_writer import md_with_inline_images
 
 # ---------------------------------------------------------------------------
 # 页面初始化
@@ -201,19 +202,13 @@ if run_clicked:
 
     output_path = run_cfg.output_path
 
-    # 实时日志区域
-    log_container = st.empty()
-    logs: list[str] = []
-
-    def progress_callback(msg: str) -> None:
-        logs.append(msg)
-        display = "\n".join(f"• {m}" for m in logs[-30:])
-        log_container.markdown(f"```text\n{display}\n```")
-
     # 新建爬虫（每个请求独立实例，避免线程安全问题）
     crawlers = get_crawlers(sources=selected_sources, config=run_cfg)
 
     with st.status("正在爬取论文...", expanded=True) as status:
+        def progress_callback(msg: str) -> None:
+            status.write(f"• {msg}")
+
         file_path, papers = process_domain(
             domain_config=domain_config,
             config=run_cfg,
@@ -245,9 +240,7 @@ if run_clicked:
                 "2. 增加数据源\n"
                 "3. 增加关键词覆盖面"
             )
-
-    # 强制刷新以展示新结果
-    st.rerun()
+        # 注意：此处不调用 st.rerun()，让结果在同一渲染周期内展示
 
 
 # ---------------------------------------------------------------------------
@@ -379,16 +372,10 @@ if papers:
                 st.error(str(e))
                 st.stop()
 
-            # 分析日志区域
-            analysis_log = st.empty()
-            analysis_logs: list[str] = []
-
-            def analysis_progress(msg: str) -> None:
-                analysis_logs.append(msg)
-                display = "\n".join(f"• {m}" for m in analysis_logs[-25:])
-                analysis_log.markdown(f"```text\n{display}\n```")
-
             with st.status("正在执行深度分析...", expanded=True) as ana_status:
+                def analysis_progress(msg: str) -> None:
+                    ana_status.write(f"• {msg}")
+
                 try:
                     target_dir = run_analysis_pipeline(
                         mode=selected_mode,
@@ -474,7 +461,10 @@ if papers:
                         key="dl_full",
                     )
 
-            # 完整报告预览
+            # 完整报告预览（图片 base64 内联以支持 Streamlit 显示）
             if ana_md_path.exists():
                 with st.expander("📝 完整报告预览", expanded=False):
-                    st.markdown(ana_md_path.read_text(encoding="utf-8"))
+                    st.markdown(md_with_inline_images(
+                        ana_md_path.read_text(encoding="utf-8"),
+                        ana_md_path.parent,
+                    ), unsafe_allow_html=True)

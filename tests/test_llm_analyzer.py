@@ -82,7 +82,12 @@ class TestExtractScores:
 | 实验充分性 | 7.0/10 | test |
 """
         scores = a._extract_scores(report)
-        assert "overall" not in scores  # 缺维度不能计算 overall
+        # 只有 2 个维度，仍应计算 overall（用现有维度加权）
+        assert "innovation" in scores
+        assert "experiment" in scores
+        assert "overall" in scores
+        # overall 应在 7.0~8.0 之间（权重 0.25+0.25 → 加权平均）
+        assert 7.0 <= scores["overall"] <= 8.0
 
     def test_chinese_colon_separator(self):
         class MockLLM:
@@ -98,7 +103,7 @@ class TestExtractScores:
         assert scores.get("innovation") == 8.5
 
     def test_no_influence_no_overall(self):
-        """缺 影响力 → sub_keys 不齐全 → overall 不计算"""
+        """缺 影响力 → 用剩余 4 维度加权计算 overall"""
         class MockLLM:
             api_key = ""
             api_base = ""
@@ -113,4 +118,4 @@ class TestExtractScores:
 """
         scores = a._extract_scores(report)
         assert "influence" not in scores
-        assert "overall" not in scores
+        assert "overall" in scores  # 4 维仍可计算

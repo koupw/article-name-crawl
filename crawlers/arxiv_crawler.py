@@ -15,7 +15,7 @@ class ArxivCrawler(BaseCrawler):
         super().__init__(excluded_keywords)
         self.client = arxiv.Client(
             page_size=50,
-            delay_seconds=5.0,  # 增加延迟避免 429 错误
+            delay_seconds=2.0,  # 适度延迟，避免 429 错误
             num_retries=2,
         )
 

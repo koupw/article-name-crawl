@@ -238,7 +238,11 @@ def run_analysis_pipeline(
     elif pdf_path:
         slug = _slugify(pdf_path.stem)
     elif md_path:
-        slug = _slugify(md_path.stem)
+        # from-md 模式下，若源文件是 full.md（已有分析目录），则用父目录名
+        if md_path.stem == "full":
+            slug = _slugify(md_path.parent.name)
+        else:
+            slug = _slugify(md_path.stem)
     else:
         slug = "unknown_paper"
 

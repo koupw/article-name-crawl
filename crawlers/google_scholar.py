@@ -42,8 +42,8 @@ class GoogleScholarCrawler(BaseCrawler):
         return "google_scholar"
 
     def _random_delay(self):
-        """随机延迟 5-10 秒，避免被封"""
-        delay = random.uniform(5.0, 10.0)
+        """随机延迟 2-4 秒，避免被封"""
+        delay = random.uniform(2.0, 4.0)
         time.sleep(delay)
 
     def _parse_paper(self, result, keywords: list[str], domain: str) -> Optional[Paper]:

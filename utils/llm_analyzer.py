@@ -7,7 +7,7 @@ LLM 深度分析引擎
 2. 优化版 14 章 Prompt 模板（执行摘要 + 14 章深度层）
 3. Map-Reduce 长文本处理（>6000 tokens 拆分为 3000/200 overlap）
 4. 5 维度评分（创新/实验/实用/写作/影响），支持动态权重
-5. 中英文输出，图片引用统一修复为 Obsidian wikilink 格式
+5. 中英文输出，图片引用统一转换为标准 markdown 格式
 """
 
 import json
@@ -122,7 +122,7 @@ _SYSTEM_PROMPT_ZH = """你是一位资深学术研究专家，擅长对学术论
 
 输出要求：
 1. 使用 Markdown 格式，所有数学公式使用标准 LaTeX（行内 $...$，块级 $$...$$）。
-2. 图片引用必须使用 Obsidian wikilink 格式：`![[filename|800]]`，不要写完整路径，不要 URL 编码。
+2. 图片引用必须使用标准 Markdown 格式：`![Figure N](images/figure-N.jpg)`，不要写完整路径，不要 URL 编码。
 3. 评分必须客观、有理有据，分数精确到 0.1。
 4. 若文本信息不足，标注 "[原文未明确说明]"，不要编造。
 5. 保持学术严谨性，区分 "论文声称" 与 "你的分析"。
@@ -133,7 +133,7 @@ Your task is to generate a structured in-depth analysis report based on the prov
 
 Output requirements:
 1. Use Markdown format. All math formulas in standard LaTeX (inline $...$, block $$...$$).
-2. Image references must use Obsidian wikilink format: `![[filename|800]]`, no full paths, no URL encoding.
+2. Image references must use standard Markdown format: `![Figure N](images/figure-N.jpg)`, no full paths, no URL encoding.
 3. Scores must be objective and justified, precise to 0.1.
 4. If information is insufficient, mark "[not explicitly stated in the original text]", do not fabricate.
 5. Maintain academic rigor; distinguish between "the paper claims" and "your analysis".
@@ -219,7 +219,7 @@ _FULL_ANALYSIS_PROMPT_ZH = """请基于以下论文全文，生成完整的深�
 [描述方法整体架构，包括主要组件和关系]
 
 **架构图选择原则**：
-1. 优先使用论文中的现成图：`![[figure-1.jpg|800]]`
+1. 优先使用论文中的现成图：`![Figure N](images/figure-N.jpg)`
 2. 仅在无图时自行描述
 
 ### 各模块详细说明
@@ -255,7 +255,7 @@ _FULL_ANALYSIS_PROMPT_ZH = """请基于以下论文全文，生成完整的深�
 [如有，列出设计思路和结果]
 
 ## 实验结果图
-[插入论文中的实验结果图：`![[figure-N.jpg|800]]`]
+[插入论文中的实验结果图：`![Figure N](images/figure-N.jpg)`]
 
 # 深度分析
 ## 研究价值评估
@@ -331,7 +331,7 @@ _FULL_ANALYSIS_PROMPT_ZH = """请基于以下论文全文，生成完整的深�
 论文全文：
 {paper_text}
 
-[注意：图片引用请统一使用 `![[figure-N.jpg|800]]` 格式]
+[注意：图片引用请统一使用 `![Figure N](images/figure-N.jpg)` 格式]
 """
 
 _FULL_ANALYSIS_PROMPT_EN = """Please generate a complete in-depth analysis report based on the following full paper text.
@@ -375,7 +375,7 @@ The report must strictly contain the following 14 chapters with bilingual header
 ## Core Idea
 ## Method Framework
 ### Overall Architecture
-[Use paper figures first: `![[figure-1.jpg|800]]`]
+[Use paper figures first: `![Figure N](images/figure-N.jpg)`]
 ### Module Details
 ## Key Innovations
 
@@ -412,7 +412,7 @@ The report must strictly contain the following 14 chapters with bilingual header
 Paper text:
 {paper_text}
 
-[Note: Use `![[figure-N.jpg|800]]` for all image references.]
+[Note: Use `![Figure N](images/figure-N.jpg)` for all image references.]
 """
 
 _SYNTHESIZE_PROMPT_ZH = """你之前已经阅读了这篇论文的多个片段分析。现在请将以下各片段的分析综合为一份完整的、连贯的深度分析报告。
@@ -422,7 +422,7 @@ _SYNTHESIZE_PROMPT_ZH = """你之前已经阅读了这篇论文的多个片段�
 2. 确保逻辑一致性（例如前后评分需一致）。
 3. 补充跨章节的关联分析（如实验结果如何支撑方法优势）。
 4. 输出完整的 14 章结构（见下方模板）。
-5. 图片引用使用 `![[figure-N.jpg|800]]`。
+5. 图片引用使用 `![Figure N](images/figure-N.jpg)`。
 
 片段分析汇总：
 {chunk_analyses}
@@ -437,7 +437,7 @@ Requirements:
 2. Ensure logical consistency (e.g., scores should align).
 3. Add cross-chapter connections (e.g., how experiments support method advantages).
 4. Output the full 14-chapter structure.
-5. Use `![[figure-N.jpg|800]]` for images.
+5. Use `![Figure N](images/figure-N.jpg)` for images.
 
 Chunk analyses:
 {chunk_analyses}
@@ -489,11 +489,45 @@ class LLMClient:
         }
 
         logger.debug("LLM request -> %s, model=%s", url, self.model)
-        resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-        resp.raise_for_status()
+
+        # 429 限流重试（指数退避：2s → 4s → 8s → 16s → 32s）
+        max_429_retries = 5
+        for attempt in range(max_429_retries):
+            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            if resp.status_code == 429 and attempt < max_429_retries - 1:
+                delay = 2 ** (attempt + 1)  # 2, 4, 8, 16 seconds
+                logger.warning(
+                    "LLM rate limited (429), retry %d/%d in %ds...",
+                    attempt + 1, max_429_retries - 1, delay,
+                )
+                time.sleep(delay)
+                continue
+            break  # not 429 or last attempt
+
+        if not resp.ok:
+            status = resp.status_code
+            detail = resp.text[:500] if resp.text else "(no body)"
+            if status == 429:
+                raise requests.HTTPError(
+                    f"LLM API 限流（429），已重试 {max_429_retries} 次仍失败。"
+                    f"免费 API 有频率限制，请稍后重试或更换 API Key。\n{detail}",
+                    response=resp,
+                )
+            raise requests.HTTPError(
+                f"{status} {resp.reason} for {url}: {detail}",
+                response=resp,
+            )
         data = resp.json()
 
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content") or ""
+        # 推理模型（如 deepseek-v4-flash-free）output 可能在 reasoning_content，
+        # content 为空时 fallback 到 reasoning_content
+        if not content:
+            reasoning = message.get("reasoning_content") or ""
+            if reasoning:
+                content = reasoning
+                logger.debug("LLM fallback to reasoning_content (%d chars)", len(reasoning))
         usage = data.get("usage", {})
         logger.debug(
             "LLM response <- prompt_tokens=%s completion_tokens=%s",
@@ -534,18 +568,25 @@ class LLMAnalyzer:
             logger.info(msg)
 
     def _fix_image_refs(self, text: str) -> str:
-        """统一修复图片引用为 Obsidian wikilink `![[images/figure-N.jpg|800]]`。"""
-        # 1. 标准 md 图片 → wikilink（提取 images/ 相对路径）
+        """统一图片引用为 note-relative 标准 markdown（Obsidian 可靠格式）。"""
+        # 1. 标准 md 图片 → 保持标准格式，修复 images/ 相对路径
         text = re.sub(
-            r"!\[([^\]]*)\]\([^)]*/(images/[^)]+)\)",
-            r"![[\2|800]]",
+            r"!\[([^\]]*)\]\((?:[^)]*?/)?(images/figure-[^)]+)\)",
+            r"![\1](\2)",
             text,
             flags=re.IGNORECASE,
         )
-        # 2. 裸 wikilink 文件名 → 补尺寸 + images/ 前缀
+        # 2. LLM 输出的裸 wikilink → 标准 md
         text = re.sub(
-            r"!\[\[(figure-\d+[a-z]?\.(?:jpg|jpeg|png|webp|gif))\|?(\d*)\]\]",
-            r"![[images/\1|800]]",
+            r"!\[\[figure-([\d-]+[a-z]?)\.(jpg|jpeg|png|webp|gif)\|?\d*\]\]",
+            r"![Figure \1](images/figure-\1.\2)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # 3. wikilink 含 images/ 路径 → 标准 md（清理旧格式）
+        text = re.sub(
+            r"!\[\[(?:.*?/)?images/(figure-[\d-]+[a-z]?)\.(jpg|jpeg|png|webp|gif)\|?\d*\]\]",
+            r"![Figure \1](images/figure-\1.\2)",
             text,
             flags=re.IGNORECASE,
         )
@@ -585,7 +626,7 @@ class LLMAnalyzer:
             )
             user_prompt = tmpl.format(paper_text=chunk_text)
 
-        return self.llm.chat(sys_prompt, user_prompt, temperature=0.6, max_tokens=8192)
+        return self.llm.chat(sys_prompt, user_prompt, temperature=0.6, max_tokens=16384)
 
     def analyze(self, md_text: str, metadata: Optional[dict] = None) -> dict:
         """
@@ -645,7 +686,7 @@ class LLMAnalyzer:
                 _SYSTEM_PROMPT_ZH if self.language == "zh" else _SYSTEM_PROMPT_EN
             )
             report = self.llm.chat(
-                sys_prompt, synthesize_prompt, temperature=0.5, max_tokens=12000
+                sys_prompt, synthesize_prompt, temperature=0.5, max_tokens=16384
             )
 
         # 4. 后处理：再次修复图片引用、确保评分可解析
@@ -669,7 +710,7 @@ class LLMAnalyzer:
         user_prompt = (
             _FULL_ANALYSIS_PROMPT_ZH if self.language == "zh" else _FULL_ANALYSIS_PROMPT_EN
         ).format(paper_text=full_text)
-        return self.llm.chat(sys_prompt, user_prompt, temperature=0.6, max_tokens=12000)
+        return self.llm.chat(sys_prompt, user_prompt, temperature=0.6, max_tokens=16384)
 
     def _build_metadata_header(self, metadata: dict) -> str:
         """将已知元数据拼装为文本头部，减少 LLM 的幻觉。"""
@@ -705,24 +746,32 @@ class LLMAnalyzer:
         # 匹配模式：维度名 + 分隔符 + 数字/10
         pattern_map = [
             (r"创新(?:性|程度)?", "innovation"),
-            (r"实验(?:充分性|评估|设计)?", "experiment"),
-            (r"写作(?:质量|表达)?", "writing"),
-            (r"实用(?:性|价值)?", "practical"),
-            (r"(?:领域|行业)?影响力?", "influence"),
+            (r"实验(?:充分性|评估|设计|验证|结果)?|方法严谨性|结果与论证", "experiment"),
+            (r"写作(?:质量|表达|水平)?|(?:论文|文章)?结构", "writing"),
+            (r"实用(?:性|价值)?|应[用前]景", "practical"),
+            (r"(?:领域|行业)?影响力?|文献与背景", "influence"),
             (r"(?:Overall|总体)(?:\s*Score|\s*评分)?", "overall"),
         ]
         scores: dict[str, float] = {}
         for cn_re, key in pattern_map:
-            pat = rf"{cn_re}\s*[：:*|=\s]*\**\s*(\d+(?:\.\d+)?)\s*/\s*10"
+            # 匹配 "维度名：7.5/10" 或 "维度名：7.5。" 两种格式
+            # 外层 (?:cn_re) 确保后缀应用于所有 alternation 分支
+            pat = rf"(?:{cn_re})\s*[：:*|=\s]*\**\s*(\d+(?:\.\d+)?)(?:\s*/\s*10)?(?=[\s。，,;\n*]|$)"
             m = re.search(pat, report, re.IGNORECASE)
             if m:
-                scores[key] = float(m.group(1))
+                val = float(m.group(1))
+                if 1.0 <= val <= 10.0:
+                    scores[key] = val
 
         # 若子维度齐全但缺少 overall，按权重计算
         sub_keys = ["innovation", "experiment", "practical", "writing", "influence"]
-        if "overall" not in scores and all(k in scores for k in sub_keys):
-            overall = sum(scores[k] * self.weights.get(k, 0.2) for k in sub_keys)
-            scores["overall"] = round(overall, 1)
+        if "overall" not in scores:
+            available = [k for k in sub_keys if k in scores]
+            if available:
+                total_weight = sum(self.weights.get(k, 0.2) for k in available)
+                if total_weight > 0:
+                    overall = sum(scores[k] * self.weights.get(k, 0.2) / total_weight for k in available)
+                    scores["overall"] = round(overall, 1)
         return scores
 
     def _extract_exec_summary(self, report: str) -> str:

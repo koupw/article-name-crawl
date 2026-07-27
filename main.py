@@ -256,6 +256,9 @@ def crawl_papers(
         论文列表
     """
     all_papers = []
+    # 每个爬虫的总超时（秒）。单个 API 请求已有 30s timeout + 重试，
+    # 这里设置一个慷慨的上限防止爬虫线程永久挂起。
+    CRAWL_TIMEOUT = 600
 
     with ThreadPoolExecutor(max_workers=len(crawlers)) as executor:
         future_map = {
@@ -270,16 +273,26 @@ def crawl_papers(
             for c in crawlers
         }
 
-        for future in as_completed(future_map):
-            crawler = future_map[future]
-            source_name = crawler.get_name()
-            try:
-                papers = future.result()
-                all_papers.extend(papers)
-                console.print(f"[green]  {source_name}: 获取 {len(papers)} 篇论文[/green]")
-            except Exception as e:
-                logger.error("%s 爬取失败: %s", source_name, e)
-                console.print(f"[red]  {source_name}: 爬取失败 - {e}[/red]")
+        try:
+            for future in as_completed(future_map, timeout=CRAWL_TIMEOUT):
+                crawler = future_map[future]
+                source_name = crawler.get_name()
+                try:
+                    papers = future.result(timeout=5)  # as_completed 已确认完成，短超时兜底
+                    all_papers.extend(papers)
+                    console.print(f"[green]  {source_name}: 获取 {len(papers)} 篇论文[/green]")
+                except Exception as e:
+                    logger.error("%s 爬取失败: %s", source_name, e)
+                    console.print(f"[red]  {source_name}: 爬取失败 - {e}[/red]")
+        except TimeoutError:
+            logger.error("爬取超时（%ds），取消未完成的爬虫", CRAWL_TIMEOUT)
+            console.print(f"[red]爬取超时（{CRAWL_TIMEOUT}s），取消未完成的数据源[/red]")
+            # 清理：取消所有未完成的 future
+            for future in future_map:
+                if not future.done():
+                    future.cancel()
+                    crawler = future_map[future]
+                    console.print(f"[yellow]  已取消: {crawler.get_name()}[/yellow]")
 
     return all_papers
 

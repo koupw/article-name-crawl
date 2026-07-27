@@ -30,7 +30,11 @@ class BaseCrawler(ABC):
 
     @property
     def session(self) -> requests.Session:
-        """获取可复用的 HTTP session（延迟初始化）"""
+        """获取可复用的 HTTP session（延迟初始化）
+
+        使用系统默认代理设置（trust_env=True），确保在国内网络环境下
+        能通过系统代理访问外网 API。若代理不可用，由 timeout 兜底。
+        """
         if self._session is None:
             self._session = requests.Session()
         return self._session
