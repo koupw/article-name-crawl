@@ -274,8 +274,9 @@ def download_and_extract_md(zip_url: str, output_path: str) -> None:
         # 读取 full.md 内容
         md_content = zf.read(md_name).decode("utf-8")
 
-        # 1. 按 Markdown 引用出现顺序提取旧图片文件名（匹配 ![](images/xxx.jpg)）
-        refs = re.findall(r"!\[.*?\]\(images/([^)]+)\)", md_content)
+        # 1. 按 Markdown 引用出现顺序提取旧图片文件名
+        #    兼容 images/xxx.jpg 和 ./images/xxx.jpg 两种前缀
+        refs = re.findall(r"!\[.*?\]\((?:\./)?images/([^)]+)\)", md_content)
         seen = set()
         ordered_old_bases: list[str] = []
         for r in refs:
@@ -284,14 +285,26 @@ def download_and_extract_md(zip_url: str, output_path: str) -> None:
                 seen.add(base)
                 ordered_old_bases.append(base)
 
-        # 2. 建立重命名映射（按 Markdown 引用顺序编号）
+        # 2. 建立重命名映射
+        #    a) 先处理 MD 中引用的图片（figure-1, figure-2, ...）
+        #    b) 再处理 ZIP 中未被 MD 引用的孤立图片（紧接其后编号）
         rename_map: dict[str, str] = {}
         for i, old_base in enumerate(ordered_old_bases, start=1):
-            ext = Path(old_base).suffix
+            ext = Path(old_base).suffix.lower()
             new_name = f"figure-{i}{ext}"
             rename_map[old_base] = new_name
 
-        # 3. 从 ZIP 提取图片并按新名写入专属目录
+        zip_images = [n for n in zf.namelist()
+                      if n.startswith("images/") and not n.endswith("/")]
+        for zip_path in sorted(zip_images):
+            raw_name = Path(zip_path).name
+            if raw_name not in rename_map:
+                i = len(rename_map) + 1
+                ext = Path(raw_name).suffix.lower()
+                new_name = f"figure-{i}{ext}"
+                rename_map[raw_name] = new_name
+
+        # 3. 从 ZIP 提取所有图片并按新名写入专属目录
         extracted_images = 0
         for old_base, new_name in rename_map.items():
             zip_path = f"images/{old_base}"
@@ -304,13 +317,17 @@ def download_and_extract_md(zip_url: str, output_path: str) -> None:
                 f.write(img_data)
             extracted_images += 1
 
-        # 4. 同步替换 Markdown 中的图片引用路径
-        #    从 ![](images/xxx.jpg) 改为 ![[stem]/images/xxx.jpg)
+        # 4. 同步替换 Markdown 中引用的图片路径（仅替换 MD 中出现的引用）
+        #    从 ![](images/xxx.jpg) 或 ![](./images/xxx.jpg)
+        #    改为 ![](stem/images/figure-N.jpg)
         img_prefix = f"{out_path.stem}/images"
-        for old_base, new_name in rename_map.items():
-            # 替换 images/old_name → stem/images/new_name
+        for old_base in ordered_old_bases:
+            new_name = rename_map[old_base]
             md_content = md_content.replace(
                 f"images/{old_base}", f"{img_prefix}/{new_name}"
+            )
+            md_content = md_content.replace(
+                f"./images/{old_base}", f"{img_prefix}/{new_name}"
             )
 
         # 写入更新后的 Markdown

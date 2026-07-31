@@ -37,6 +37,7 @@ class FilterConfig(BaseModel):
     year_to: Optional[int] = None
     require_doi: bool = False
     open_access_only: bool = False
+    min_matched_keywords: int = 0
 
     @field_validator("min_citations")
     @classmethod

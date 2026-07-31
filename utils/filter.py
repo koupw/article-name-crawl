@@ -23,7 +23,8 @@ def filter_papers(papers: list[Paper], filters: FilterConfig) -> list[Paper]:
             or filters.year_from is not None
             or filters.year_to is not None
             or filters.require_doi
-            or filters.open_access_only):
+            or filters.open_access_only
+            or filters.min_matched_keywords > 0):
         return papers
 
     filtered = []
@@ -64,6 +65,10 @@ def _passes_filter(paper: Paper, filters: FilterConfig) -> bool:
 
     # 开放获取筛选
     if filters.open_access_only and not paper.is_open_access:
+        return False
+
+    # 关键词匹配数量筛选
+    if filters.min_matched_keywords > 0 and len(paper.matched_keywords) < filters.min_matched_keywords:
         return False
 
     return True

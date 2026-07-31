@@ -7,6 +7,7 @@
 - **多数据源支持**：arXiv、Semantic Scholar、Google Scholar、OpenAlex、IEEE Xplore、Crossref、CORE
 - **并发爬取**：所有数据源同时爬取，总耗时 ≈ 最慢的单个数据源
 - **智能去重**：基于 DOI、arXiv ID、标题相似度的多级去重 + 跨次去重
+- **关键词匹配筛选**：至少匹配 N 个关键词才记录（可配置），过滤弱相关论文
 - **标题翻译**：自动翻译英文标题为中文（Google / 百度），结果持久化缓存
 - **论文深度分析**：选择论文 → MinerU PDF 解析 → LLM 生成 14 章结构化报告（含评分/执行摘要/图片）
 - **Web 界面**：Streamlit 双页面（爬取 + 分析），双击 vbs 一键启动
@@ -91,17 +92,18 @@ papers_dir: papers
 
 research_domains:
   FMCW Laser Ranging:
-    keywords:
-      - frequency modulated continuous wave
-      - FMCW
-      - laser ranging
-      # ... 更多关键词
+    priority: 5
     arxiv_categories:
       - physics.optics
       - physics.ins-det
       - eess.SP
       - physics.app-ph
-    priority: 5
+    keywords:
+      # 基础与原理
+      - frequency modulated continuous wave
+      - FMCW
+      - laser ranging
+      # ... 更多子方向关键词
 
 excluded_keywords:
   - workshop
@@ -126,11 +128,12 @@ baidu_translate_app_key: ''     # 百度翻译 Secret Key
 
 # 质量筛选配置
 filters:
-  min_citations: 0          # 最低引用数（0 表示不限制）
-  year_from: null           # 起始年份（null 表示不限制）
-  year_to: null             # 结束年份（null 表示不限制）
-  require_doi: false        # 是否必须有 DOI
-  open_access_only: false   # 是否只要开放获取的论文
+  min_citations: 0           # 最低引用数（0 表示不限制）
+  year_from: null            # 起始年份（null 表示不限制）
+  year_to: null              # 结束年份（null 表示不限制）
+  require_doi: false         # 是否必须有 DOI
+  open_access_only: false    # 是否只要开放获取的论文
+  min_matched_keywords: 2    # 最少匹配关键词数（≤此数则过滤）
 ```
 
 ### 配置说明
@@ -159,6 +162,7 @@ API 密钥类配置项同时支持环境变量（配置文件留空时读取）�
 | `filters.year_to` | 结束年份（null 表示不限制） |
 | `filters.require_doi` | 是否必须有 DOI |
 | `filters.open_access_only` | 是否只要开放获取的论文 |
+| `filters.min_matched_keywords` | 最少匹配关键词数（标题+摘要中至少命中 N 个关键词） |
 
 ## 使用方法
 

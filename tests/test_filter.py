@@ -130,6 +130,43 @@ def test_filter_no_filters():
     assert len(filter_papers(papers, filters)) == 1
 
 
+# ========== 关键词匹配筛选 ==========
+
+def test_filter_keyword_pass():
+    """匹配关键词数达标应通过"""
+    papers = [make_paper(matched_keywords=["fmcw", "laser", "ranging"])]
+    filters = FilterConfig(min_matched_keywords=2)
+    assert len(filter_papers(papers, filters)) == 1
+
+
+def test_filter_keyword_fail():
+    """匹配关键词数不足应过滤"""
+    papers = [make_paper(matched_keywords=["fmcw"])]
+    filters = FilterConfig(min_matched_keywords=2)
+    assert len(filter_papers(papers, filters)) == 0
+
+
+def test_filter_keyword_exact():
+    """匹配关键词数等于阈值应通过"""
+    papers = [make_paper(matched_keywords=["fmcw", "laser"])]
+    filters = FilterConfig(min_matched_keywords=2)
+    assert len(filter_papers(papers, filters)) == 1
+
+
+def test_filter_keyword_zero():
+    """无匹配关键词且阈值为0应通过"""
+    papers = [make_paper(matched_keywords=[])]
+    filters = FilterConfig(min_matched_keywords=0)
+    assert len(filter_papers(papers, filters)) == 1
+
+
+def test_filter_keyword_default():
+    """未设置关键词阈值时所有论文通过"""
+    papers = [make_paper(matched_keywords=[])]
+    filters = FilterConfig()
+    assert len(filter_papers(papers, filters)) == 1
+
+
 def test_filter_empty_list():
     """空列表应返回空列表"""
     assert filter_papers([], FilterConfig()) == []

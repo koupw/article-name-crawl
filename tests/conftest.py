@@ -26,6 +26,7 @@ def make_paper(
     arxiv_id: Optional[str] = None,
     is_open_access: bool = False,
     title_zh: Optional[str] = None,
+    matched_keywords: Optional[list[str]] = None,
 ) -> Paper:
     """创建测试用论文，提供合理的默认值"""
     published_date = datetime(year, 1, 1) if year else None
@@ -42,4 +43,5 @@ def make_paper(
         arxiv_id=arxiv_id,
         is_open_access=is_open_access,
         title_zh=title_zh,
+        matched_keywords=matched_keywords or [],
     )

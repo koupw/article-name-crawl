@@ -21,17 +21,24 @@ pip install requests
 
 **方式 A：配置文件（推荐，最方便）**
 
-将 `config.example.json` 复制为 `config.json`，填入你的 Token：
+将 `.env` 或 `config.example.json` 复制为 `config.json`，填入你的 Token：
 
 ```bash
-cd E:\WorkSpace\OpencodeWork\test\mineru-api-client
+# 方式 1: 在项目根目录创建 .env 文件，设置 MINERU_TOKEN
+cd article-name-crawl
+echo MINERU_TOKEN=你的Token >> .env
+
+# 方式 2: 在 mineru-api-client 目录下复制配置模板
+cd mineru-api-client
 copy config.example.json config.json
 ```
 
 编辑 `config.json`：
 ```json
 {
-  "token": "你的MinerU API Token"
+  "token": "你的MinerU API Token",
+  "model": "vlm",
+  "base_url": "https://mineru.net/api/v4"
 }
 ```
 
@@ -63,11 +70,11 @@ python mineru_client.py report.pdf --token "your_token_here"
 python mineru_client.py "https://cdn-mineru.openxlab.org.cn/demo/example.pdf"
 ```
 
-#### 解析本地 PDF（自动上传临时直链）
+#### 解析本地 PDF（MinerU v4 原生直传）
 ```bash
-python mineru_client.py "C:\Users\we\Desktop\report.pdf"
+python mineru_client.py paper.pdf
 ```
-> 文件会被上传到 file.io 获取一次性直链，MinerU 下载后自动失效，14 天后彻底删除。
+> 文件通过 MinerU 预签名 URL 直传到 OSS，解析完成后自动下载结果。
 
 #### 使用 pipeline 模型（速度更快）
 ```bash
@@ -119,17 +126,11 @@ python mineru_client.py report.pdf --yes -o report.md
 ## 隐私说明
 
 - **公网 URL 解析**：PDF 由 MinerU 官方服务器直接下载并解析。
-- **本地文件解析**：文件先上传至 file.io 获取一次性临时直链，MinerU 服务器下载后即失效，14 天后自动删除。若文件涉密，建议自行上传到私有 OSS 获取直链后传入 URL 解析。
+- **本地文件解析**：文件通过 MinerU 预签名 URL 直传到官方 OSS 存储，解析完成后自动清理。全程不经过第三方服务。
 
 ---
 
 ## 常见问题
 
-**Q: 为什么解析本地文件需要先上传？**  
-A: 官方 API 当前只接受公网直链 URL，不支持直接上传文件。脚本通过 file.io 临时上传获取直链，这是目前最便捷的方案。
-
-**Q: 上传失败怎么办？**  
-A: file.io 对文件大小有限制（约 100MB）。大文件请自行上传到图床/OSS 获取直链后传入 URL。
-
-**Q: 可以解析 DOCX/PPTX/XLSX 吗？**  
-A: 当前脚本针对官方 PDF 解析 API 设计。如需解析 Office 文档，建议将文件另存为 PDF 后再调用。
+**Q: 支持哪些文件格式？**  
+A: 当前仅支持 PDF 解析。如需解析 Office 文档，建议先转为 PDF。

@@ -135,15 +135,16 @@ def _normalize_image_refs(text: str) -> str:
     )
     # 3. wikilink 含 images/ 路径 → 标准 md
     text = re.sub(
-        r"!\[\[(?:.*?/)?images/(figure-[\d-]+[a-z]?)\.(jpg|jpeg|png|webp|gif)\|?\d*\]\]",
+        r"!\[\[(?:.*?/)?images/figure-([\d-]+[a-z]?)\.(jpg|jpeg|png|webp|gif)\|?\d*\]\]",
         r"![Figure \1](images/figure-\1.\2)",
         text,
         flags=re.IGNORECASE,
     )
-    # 4. 清理旧残留：![Figure figure-1] → ![Figure 1]
+    # 4. 清理 LLM 残留：![Figure figure-X](...) → ![Figure X](figures/figure-X.ext)
+    #    以 URL 中的图片文件名为准（avoid alt/URL 编号不一致导致引用错位）
     text = re.sub(
-        r"!\[Figure figure-([\d-]+[a-z]?)\.(\w+)\]\((?:[^)]*?/)?images/figure-[^)]+\)",
-        r"![Figure \1](images/figure-\1.\2)",
+        r"!\[Figure[^\]]*\]\((?:[^)]*?/)?(images/figure-([\d-]+[a-z]?)\.(jpg|jpeg|png|webp|gif))\)",
+        r"![Figure \2](\1)",
         text,
         flags=re.IGNORECASE,
     )

@@ -33,7 +33,7 @@ streamlit run web/streamlit_app.py
 
 ```bash
 # 进入项目目录
-cd E:/WorkSpace/ClaudeWork/article-name-crawl
+cd article-name-crawl
 
 # 激活虚拟环境
 .venv\Scripts\activate
